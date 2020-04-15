@@ -1,6 +1,10 @@
 #include "hardware.hpp"
 
-ADC_MODE(ADC_VCC);
+#if defined(_USE_MLX90615_)
+#include <MLX90615.h>
+#endif
+
+//ADC_MODE(ADC_VCC);
 
 String twoDigits(int digits){
   if(digits < 10) {
@@ -20,9 +24,13 @@ void Hardware::serial_init(){
 }
 
 void Hardware::thermometer_init(){
+#if defined(_USE_MLX90614_)
     therm.begin(); // Initialize the MLX90614
     therm.setUnit(TEMP_C);   
     therm.wake();
+#elif defined(_USE_MLX90615_)
+    therm.begin();
+#endif
 }
 
 void Hardware::time_init(){
@@ -33,7 +41,7 @@ void Hardware::time_init(){
         delay(3000);                                                              
     }
     println_w(F("DS3231M initialized."));                                  //                                  //
- // DS3231M.adjust();                                                           // Set to library compile Date/Time //
+  //  DS3231M.adjust();                                                           // Set to library compile Date/Time //
     DateTime now = DS3231M.now();                                               // get the current time             //
     setTime(now.unixtime());
 
@@ -63,25 +71,43 @@ void Hardware::init() {
 }
 
 void Hardware::print_stat() {
+    float t_ambient = 0;
+    float t_object  = 0;
+#if defined(_USE_MLX90614_)
+    t_ambient = therm.ambient());
+    t_object  = print_w( therm.object()); 
+#elif defined(_USE_MLX90615_)
+    t_ambient = therm.readTemp(MLX90615::MLX90615_SRCA, MLX90615::MLX90615_TC ); 
+    t_object  =  therm.readTemp( ); 
+#endif
+
+    
     print_w("Heart rate: ");print_w( pulse.getHeartRate() ); print_w("bpm / ");
     print_w("SpO2: ");      print_w( pulse.getSpO2());       print_w("%\t");
-    print_w("Ambient: ");   print_w( therm.ambient()); print_w("*C\t");
-    print_w("Object: ");    print_w( therm.object());  print_w("*C\t");
+    print_w("Ambient: ");   print_w( t_ambient ); print_w("*C\t");
+    print_w("Object: ");    print_w( t_object );  print_w("*C\t");
     print_w("Vcc: ");       print_w( get_redable_vcc() ) ;
     println_w();
 }
 
 void Hardware::update() {
     pulse.update();
+#if defined(_USE_MLX90614_)
     therm.read();
-    float t = therm.object() ;
+#endif
+    float t;
+#if defined(_USE_MLX90614_)
+    t = therm.object() ;
+#elif defined(_USE_MLX90615_)
+    t = therm.readTemp(MLX90615::MLX90615_SRCO, MLX90615::MLX90615_TC);
+#endif
     float h = pulse.getHeartRate() ;
     
     display.update(t, h);
 }
 
 int Hardware::next_wake_time(){
-    int rest = minute() % 2; 
+    int rest = minute() % 1; 
     
     return (60 * rest) + 60 - second();
 }
@@ -90,7 +116,11 @@ void Hardware::WakeSensors() {
     powerSave = false;
     display.setPowerSave(powerSave); // off 4 test
     pulse.resume();
+#if defined(_USE_MLX90614_)
     therm.wake();
+#elif defined(_USE_MLX90615_)
+     //Mlx90615_ExitSleep(v)
+#endif
 }
 
 void Hardware::GoToSleep() {
@@ -98,11 +128,21 @@ void Hardware::GoToSleep() {
 
     display.setPowerSave(powerSave);
     pulse.shutdown();
+#if defined(_USE_MLX90614_)
     therm.sleep();
+#elif defined(_USE_MLX90615_)
+//    Mlx90615_EnterSleep();
+#endif
     log_file.close(); 
 
     int next_wake = next_wake_time();
+    
+#if defined(ESP8266)
     ESP.deepSleep( next_wake * 1e6, WAKE_RF_DISABLED);
+#elif defined(ESP32) 
+    esp_sleep_enable_timer_wakeup(next_wake * 1e6);
+    esp_deep_sleep_start();
+#endif
 }
 
 void Hardware::power_safe_logic() {
@@ -113,7 +153,15 @@ void Hardware::power_safe_logic() {
         displaySleepTimer = millis();
     }
     if ( (millis() - displaySleepTimer) > displaySleepDelay ) {
-        log_file.write_log( pulse.getHeartRate(), therm.ambient(), therm.object(), get_redable_vcc() );
+        float t_ambient = 0, t_object = 0;
+#if defined(_USE_MLX90614_)
+        t_ambient = therm.ambient(); 
+        t_object  = therm.object();
+#elif defined(_USE_MLX90615_)
+        t_ambient = therm.readTemp(MLX90615::MLX90615_SRCA, MLX90615::MLX90615_TC);
+        t_object  = therm.readTemp();
+#endif
+        log_file.write_log( pulse.getHeartRate(), t_ambient, t_object, get_redable_vcc() );
         print_stat();
         GoToSleep();
     }
@@ -121,7 +169,12 @@ void Hardware::power_safe_logic() {
 
 float Hardware::get_redable_vcc() {
     float voltaje=0.00f;
+    
+#if defined(ESP8266)
     voltaje = ESP.getVcc();
+#elif defined(ESP32) 
+
+#endif
     return voltaje/1024.00f;
 }
 
@@ -130,7 +183,7 @@ float Hardware::get_redable_vcc() {
 // File System
 
 void FileSystem::init(){
-  
+#if defined(ESP8266)
     FSInfo fs_info;
     SPIFFS.begin();
     SPIFFS.info(fs_info);
@@ -154,6 +207,7 @@ void FileSystem::init(){
     }
     if ("w" == modifier)
         _file.print("V:1\n");
+#endif
 }
 
 char * FileSystem::current_day_fname(char *inputBuffer, int inputBuffer_size, char *dir, int16_t year, int8_t month, int8_t  day) {
@@ -170,6 +224,8 @@ void FileSystem::cat_file(File f){
 void FileSystem::scan_log_dir(char* dir_name) {   
     char *files[MAX_FILES_CNT];
     int i = 0;
+#if defined(ESP8266)
+
     Dir dir = SPIFFS.openDir(dir_name);
     while ( dir.next() ) {
         File f = dir.openFile("r");
@@ -180,7 +236,7 @@ void FileSystem::scan_log_dir(char* dir_name) {
        // if (MAX_FILES_CNT > i) 
          //    files[i] = strncpy( );
       //  else 
-    }
+#endif
 }
 
 void FileSystem::write_log( float HeartRate, float AmbientTempC, float ObjectTempC, float vcc ){
@@ -203,7 +259,9 @@ void FileSystem::close(){
 // Display
 
 void Display::init() {
-    U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C _display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ 5, /* data=*/ 4);   
+//    U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C _display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ 5, /* data=*/ 4); 
+    U8G2_SH1106_128X64_NONAME_F_HW_I2C  _display1(U8G2_R0, U8X8_PIN_NONE  );
+
     _display = _display1;
     _display.begin();        
     _display.setBusClock( 100000 );
@@ -258,6 +316,6 @@ bool Control::button_pressed(){
         if (0 == Button_State) {
           return true;
         }
-    } 
+    }
     return false;
 }

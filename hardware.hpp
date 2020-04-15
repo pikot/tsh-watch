@@ -6,9 +6,16 @@
 #include "FS.h"
 #include <DS3231M.h>
 #include <U8g2lib.h>
-#include <SparkFunMLX90614.h>
 
-//#define _SERIAL_DEBUG_ 1
+#define _SERIAL_DEBUG_ 1
+#define _USE_MLX90615_ 1
+
+#if defined(_USE_MLX90614_)
+#include <SparkFunMLX90614.h>
+#elif defined(_USE_MLX90615_)
+#include <MLX90615.h>
+#endif
+
 
 #ifdef _SERIAL_DEBUG_
 #define print_w(a) (Serial.print(a))
@@ -17,12 +24,12 @@
 #else
 #define print_w(a) 
 #define println_w(a) 
-#define write_w(a)
+#define write_w(a) 
 #endif
 
 class Display{
     private:
-        const int REPORTING_PERIOD_MS = 1000;
+        const int REPORTING_PERIOD_MS = 2000;
         U8G2 _display;
  
         uint32_t ts_last_display_update = 0;
@@ -37,7 +44,7 @@ class Display{
 
 class FileSystem {
     private:
-        bool    _can_write = true;
+        bool    _can_write = false;
 
         File    _file;
         
@@ -64,7 +71,11 @@ class Control {
  
 class Hardware {
     private:
+#if defined(_USE_MLX90614_)
         IRTherm         therm;
+#elif defined(_USE_MLX90615_)
+        MLX90615        therm;
+#endif
         DS3231M_Class   DS3231M;
         Display         display;
         PulseOximeter   pulse;
