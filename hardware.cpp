@@ -3,14 +3,11 @@
 #if defined(_USE_MLX90615_)
 #include <MLX90615.h>
 #endif
-#if defined(ESP8266)
-ADC_MODE(ADC_VCC);
-#endif
 
 #include <esp_wifi.h>
 #include <esp_bt.h>
 
-RTC_DATA_ATTR uint8_t SensorState;
+RTC_DATA_ATTR uint8_t SensorState = SENSOR_AWAKE;
 RTC_DATA_ATTR uint8_t ControlState = CONTROL_AWAKE;
 
 RTC_DATA_ATTR time_t next_scan_time = 0;
@@ -35,21 +32,6 @@ void Hardware::serial_init(){
 #endif
 }
 
-void Hardware::thermometer_init(){
-#if defined(_USE_MLX90614_)
-    therm.begin(); // Initialize the MLX90614
-    therm.setUnit(TEMP_C);   
-    therm.wake();
-#elif defined(_USE_MLX90615_)
-/*
-    if(!is_after_deepsleep) 
-        therm.begin();
-    else
-    */
-    therm.wakeUp();
-#endif
-}
-
 void Hardware::time_init(){
     const uint8_t  SPRINTF_BUFFER_SIZE =     32;                                  // Buffer size for sprintf()        //
     char          inputBuffer[SPRINTF_BUFFER_SIZE];                               // Buffer for sprintf()/sscanf()    //
@@ -71,13 +53,6 @@ void Hardware::time_init(){
     current_time = now();
 }
 
-void Hardware::pulse_init(){
-    pulse.begin();// PULSEOXIMETER_DEBUGGINGMODE_PULSEDETECT
-    pulse.setIRLedCurrent(MAX30100_LED_CURR_7_6MA);
-
-   // pulse.setIRLedCurrent(MAX30100_LED_CURR_7_6MA);
-}
-
 bool Hardware::is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason) {
   
     bool status = false;
@@ -97,7 +72,6 @@ bool Hardware::is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason) {
 
 void Hardware::init() {
     setCpuFrequencyMhz(80);
-
     displaySleepTimer = millis();
 
     esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
@@ -106,39 +80,45 @@ void Hardware::init() {
     print_fsm_state( __func__, __LINE__ );
 
     is_after_deepsleep = is_wake_by_deepsleep(wakeup_reason);
+    if (false == is_after_deepsleep) {
+        memset(&RTC_RECORDS, 0, sizeof(StatRecord_t));
+    }
+    print_all_stat(); //!!!!!!!!!!!!!!!!!!
     print_w("wakeup_reason ");  println_w( esp_sleep_wake[wakeup_reason] );
     print_w("StatRecord_cnt "); println_w( StatRecord_cnt );
 
-    if ( CONTROL_SLEEPING == ControlState && ESP_SLEEP_WAKEUP_EXT1 == wakeup_reason ){
+    if ( CONTROL_SLEEPING == ControlState && ESP_SLEEP_WAKEUP_EXT0 == wakeup_reason ){
          ControlState = CONTROL_AWAKE;
     }
-    thermometer_init(); // MLX90615 demands magic with  wire pins, so - it should run first alltime :/
-    time_init();
+    
+    sTerm.init(); // MLX9061* demands magic with  wire pins, so - it should run first alltime :/
+    time_init();  // timer should work alltime
+    sCurrent.init(); // anyway i want to trace battery
 
     if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
          SensorState = SENSOR_AWAKE;
     }
     
     if ( SENSOR_AWAKE == SensorState  ) {
-        pulse_init();
-        log_file.init();
-        gyroscope.init(is_after_deepsleep);
-        
+        init_sensors(); 
     }
     if ( CONTROL_AWAKE == ControlState ) {
         display.init();
         control.init();   
     }
-    /*
-    //if ( CONTROL_AWAKE == ControlState || SENSOR_AWAKE == SensorState ) 
-    {
-        time_init();
-    }
-    */
+
     print_fsm_state( __func__, __LINE__);
 }
 
+void Hardware::init_sensors() {
+    sPulse.init();
+    log_file.init();
+    sGyro.init(is_after_deepsleep);
+}
+
 void Hardware::print_fsm_state( const char *func_name, uint32_t line_number) {
+    if (!debug_trace_fsm)
+        return;
     print_w( func_name );       print_w(":");    print_w( line_number );     print_w("\t");
     print_w("SensorState: ");   print_w( sensor_state_name[SensorState] );   print_w("\t");
     print_w("ControlState: ");  print_w( control_state_name[ControlState] ); print_w("\t");
@@ -151,18 +131,31 @@ void Hardware::print_stat(StatRecord_t *record) {
     print_w("SpO2: ");      print_w( record->SpO2);       print_w("%\t");
     print_w("Ambient: ");   print_w( record->AmbientTempC ); print_w("*C\t");
     print_w("Object: ");    print_w( record->ObjectTempC );  print_w("*C\t");
-    print_w("Vcc: ");       print_w( get_redable_vcc() ) ;
+    print_w("Vcc: ");       print_w( record->Vcc ) ;
     println_w();
+}
+void Hardware::print_all_stat() {
+    println_w("print_all_stat");
+    for (int i = 0; i < CACHE_RECORD_CNT; i++){
+        print_w( i ); print_w( ". ");
+         print_stat(&RTC_RECORDS[i]);
+    }
+    println_w();
+}
+
+void Hardware::read_sensors(){
+    sGyro.read_data();
+    sTerm.read_data();
+    sPulse.read_data();
+    sCurrent.read_data();
 }
 
 void Hardware::update() {
     current_time = now();
-   // print_fsm_state( __func__, __LINE__);
- //   print_w("next_scan_time "); print_w(next_scan_time ); print_w(", ");
-   // print_w("current_time ");   println_w(current_time );
    
     if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
          SensorState = SENSOR_AWAKE;
+         init_sensors();
     }
   //  print_fsm_state( __func__, __LINE__);
 
@@ -171,23 +164,21 @@ void Hardware::update() {
     }
   //  print_fsm_state( __func__, __LINE__);
 
-    if ( SENSOR_AWAKE == SensorState ) {
-        pulse.update();
-#if defined(_USE_MLX90614_)
-        therm.read();
-#endif
+    if ( SENSOR_AWAKE == SensorState ) { // start collect and process data 
+        sPulse.update();    
+        sTerm.update();
     }
  //   print_fsm_state( __func__, __LINE__);
-    
-    StatRecord_t current_rec;
-    memset(&current_rec, 0, sizeof(current_rec));
-    current_sensor_data(&current_rec);
-    
+ 
     if ( CONTROL_AWAKE == ControlState ){
         StatRecord_t * r  = get_last_sensor_data();
         display.update(r->ObjectTempC , r->HeartRate, r->Steps); 
     }
     if ( SENSOR_WRITE_RESULT == SensorState ) {
+        StatRecord_t current_rec;
+        memset(&current_rec, 0, sizeof(current_rec));
+        current_sensor_data(&current_rec);
+        
         log_file.write_log( &current_rec );
         print_stat(&current_rec);
         int next_wake  = next_wake_time();
@@ -206,12 +197,8 @@ int Hardware::next_wake_time(){
 void Hardware::WakeSensors() {
     powerSave = false;
     display.setPowerSave(powerSave); // off 4 test
-    pulse.resume();
-#if defined(_USE_MLX90614_)
-  //  therm.wake();
-#elif defined(_USE_MLX90615_)
-   // therm.wakeUp();
-#endif
+    sPulse.wake();
+    sCurrent.wake();
 }
 
 void Hardware::GoToSleep() {
@@ -220,53 +207,47 @@ void Hardware::GoToSleep() {
         display.setPowerSave(powerSave);
         ControlState = CONTROL_SLEEPING;
     }
+    
     if ( SENSOR_GOTOSLEEP == SensorState ) {
-        pulse.shutdown();
+        sPulse.sleep();
         // term should go in sleep last, because 2 sleep need manipulation with scl and sda 
         log_file.close(); 
         SensorState = SENSOR_SLEEPING;
     }
 
     if ( (CONTROL_SLEEPING == ControlState) && (SENSOR_SLEEPING == SensorState) ) {
-#if defined(_USE_MLX90614_) 
-        therm.sleep(); 
-#elif defined(_USE_MLX90615_)
-        therm.sleep(); // MLX9061* demands magic action with wire before go to sleep
-#endif
+        sCurrent.sleep();
+        sTerm.sleep(); 
+
         control.init_wakeup();
-    
+
         int next_wake = next_wake_time();
         print_w("next_wake ");  println_w(next_wake);  
-#if defined(ESP8266)
-        ESP.deepSleep( next_wake * 1e6, WAKE_RF_DISABLED);
-#elif defined(ESP32) 
+
    // esp_wifi_stop();
   // esp_bt_controller_disable();
         esp_sleep_enable_timer_wakeup(next_wake * 1e6);
         esp_deep_sleep_start();
-#endif
+
     }
 }
 
 StatRecord_t *Hardware::current_sensor_data(StatRecord_t *record) {
+    read_sensors();
+
     //StatRecord_t record;
     record->Time         = current_time; 
-    record->Steps        = gyroscope.getStepCount();
-    record->HeartRate    = pulse.getHeartRate();
-    record->SpO2         = pulse.getSpO2();
-    
-#if defined(_USE_MLX90614_)
-    record->AmbientTempC = therm.ambient(); 
-    record->ObjectTempC  = therm.object();
-#elif defined(_USE_MLX90615_)
-    record->AmbientTempC = therm.readTemp(MLX90615::MLX90615_SRCA, MLX90615::MLX90615_TC);
-    record->ObjectTempC  = therm.readTemp();
-#endif
+    record->Steps        = sGyro.StepCount();
+    record->HeartRate    = sPulse.HeartRate();
+    record->SpO2         = sPulse.SpO2();
+    record->AmbientTempC = sTerm.AmbientC(); 
+    record->ObjectTempC  = sTerm.ObjectC();
+    record->Vcc          = sCurrent.Vcc();
 
     return record;
 }
 
-StatRecord_t *Hardware::get_last_sensor_data (){
+StatRecord_t *Hardware::get_last_sensor_data() {
     uint8_t used_item = 0;
     if (0 == StatRecord_cnt)
         used_item = CACHE_RECORD_CNT - 1;
@@ -277,14 +258,13 @@ StatRecord_t *Hardware::get_last_sensor_data (){
         used_item = 0;
 
     print_fsm_state( __func__, __LINE__);
-    print_w("used_item "); println_w( used_item ); //print_w(", ");
+ //   print_w("used_item "); println_w( used_item ); //print_w(", ");
     print_stat(  &RTC_RECORDS[ used_item ] );
-//    print_w("RTC_RECORDS[ used_item ] ");   println_w( RTC_RECORDS[ used_item ] );
     return &RTC_RECORDS[used_item];
 }
 
 void Hardware::power_safe_logic() {
-  //    print_fsm_state( __func__, __LINE__);
+    print_fsm_state( __func__, __LINE__);
 
     if ( control.button_pressed() ) {  // Call code  button transitions from HIGH to LOW
 
@@ -309,48 +289,29 @@ void Hardware::power_safe_logic() {
     GoToSleep();
 }
 
-float Hardware::get_redable_vcc() {
-    float voltaje=0.00f;
-    
-#if defined(ESP8266)
-    voltaje = ESP.getVcc();
-#elif defined(ESP32) 
-
-#endif
-    return voltaje/1024.00f;
-}
-
-
 
 //============================================================================================
 // File System
 
 void FileSystem::init(){
-  /*
-    SPIFFS.begin();
+    SPIFFS.begin(true);
     
     size_t totalBytes = 0, usedBytes = 0;
-#if defined(ESP8266)
-    FSInfo fs_info;
-    SPIFFS.info(fs_info);
-    totalBytes = fs_info.totalBytes;
-    usedBytes  = fs_info.usedBytes;
-#elif defined(ESP32)
     totalBytes = SPIFFS.totalBytes();
     usedBytes  = SPIFFS.usedBytes();
-#endif
+
     String temp_str = "totalBytes = " + String(totalBytes) + ", usedBytes = " +  String(usedBytes);
     println_w(temp_str);
 
     char fname[32];
     current_day_fname( fname, sizeof(fname), "/log", year(), month(), day() );
-    scan_log_dir("/log");
+    // scan_log_dir("/log");
 
     char *modifier = "w";
     if (SPIFFS.exists(fname) )
         modifier = "a";
         
-    if ( !_can_write )
+    if ( !_can_write )      
         return;
     _file = SPIFFS.open(fname, modifier);
     if ( !_file ) {
@@ -358,7 +319,7 @@ void FileSystem::init(){
     }
     if ("w" == modifier)
         _file.print("V:1\n");
-*/
+
 }
 
 char * FileSystem::current_day_fname(char *inputBuffer, int inputBuffer_size, char *dir, int16_t year, int8_t month, int8_t  day) {
@@ -372,21 +333,33 @@ void FileSystem::cat_file(File f){
     }
 }
 
-void FileSystem::scan_log_dir(char* dir_name) {   
-    char *files[MAX_FILES_CNT];
-    int i = 0;
-#if defined(ESP8266)
-    Dir dir = SPIFFS.openDir(dir_name);
-    while ( dir.next() ) {
-        File f = dir.openFile("r");
-        print_w(dir.fileName());
-        print_w(" ");
-        println_w(f.size());
-        // cat_file(f);
-       // if (MAX_FILES_CNT > i) 
-         //    files[i] = strncpy( );
-      //  else 
-#endif
+void FileSystem::list_dir(fs::FS &fs, const char * dirname){
+    File root = fs.open(dirname);
+    if(!root){
+        return;
+    }
+    if(!root.isDirectory()){
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            continue;
+        } else {
+            print_w("  FILE: ");
+            print_w(file.name());
+            print_w("\tSIZE: ");
+            println_w(file.size());
+            cat_file(file);
+            
+        }
+        file = root.openNextFile();
+    }
+}
+
+void FileSystem::scan_log_dir(char* dir_name) {
+    list_dir(SPIFFS, dir_name);
 }
 
 void FileSystem::save_records_to_file(){
@@ -397,7 +370,7 @@ void FileSystem::save_records_to_file(){
     for (int i = 0; i < StatRecord_cnt; i++, record++) {
         String temp_str = String(record->Time) + "\t" + String(record->Vcc) + String(record->Steps) + "\t" +
                            String(record->HeartRate) + "\t" +  String(record->AmbientTempC) + "\t" +  String(record->ObjectTempC) + "\n" ;
-                           
+        println_w(temp_str);
         _file.print(temp_str);
     }
 }
@@ -475,48 +448,19 @@ void Display::setPowerSave(bool powerSave){
     _display.setPowerSave(powerSave);
 }
 
-//============================================================================================
 
-void Gyroscope::init(bool is_after_deepsleep) {
-    
-    gyro.begin(BMI160GenClass::I2C_MODE, Wire, i2c_addr, 2, is_after_deepsleep);
-    bool sce = gyro.getStepCountEnabled();
-    uint8_t sdm = gyro.getStepDetectionMode();
-
-    print_w("StepCountEnabled ");
-    println_w(sce ? "true" : "false"  );
-    print_w("StepDetectionMode " );
-    println_w(sdm );
-    
-    if ( !sce ) {
-        println_w( "init gyro  step counter" ) ;
-        gyro.setStepCountEnabled(true);
-        sce = gyro.getStepCountEnabled();
-        
-        print_w("StepCountEnable #2  ");
-        println_w(sce ? "true" : "false"  );
-    }
-    else {
-        println_w( "gyro step inited" );
-    }
-    uint16_t sc = gyro.getStepCount();
-    print_w("StepCount ");
-    println_w(sc );
-    return;//  gyro.getStepCount();
-
-}
-
-uint16_t Gyroscope::getStepCount(){
-    return  gyro.getStepCount();
-}
 //============================================================================================
 // Control
 
 void Control::init(){
+    pinMode(LEFT_BUTTON,INPUT);
+    pinMode(RIGHT_BUTTON,INPUT);
+    pinMode(OK_BUTTON,INPUT);
+
     int l_State = digitalRead(LEFT_BUTTON);
     int r_State = digitalRead(RIGHT_BUTTON);
     int o_State = digitalRead(OK_BUTTON);
-    
+
     _Button_State = 0;
     if (l_State)
         _Button_State |= 1ULL << LEFT_BUTTON;
@@ -532,11 +476,22 @@ void Control::init(){
 */
 }
 
+void  Control::print_button_state (const char *func_name, uint32_t line_number, int l_State, int r_State, int o_State ) {
+    print_w("print_button_state --  ");
+    print_w( func_name );       print_w(":");    print_w( line_number );     print_w("\t");
+    print_w(LEFT_BUTTON);   print_w(" - ");print_w(l_State);     print_w(", ");    
+    print_w(RIGHT_BUTTON);  print_w(" - ");print_w(r_State);     print_w(", ");     
+    print_w(OK_BUTTON);     print_w(" - ");print_w(o_State);     println_w("");  
+}
+
 bool Control::button_pressed(){
+    pinMode(LEFT_BUTTON,INPUT);
+    pinMode(RIGHT_BUTTON,INPUT);
+    pinMode(OK_BUTTON,INPUT);
+
     int l_State = digitalRead(LEFT_BUTTON);
     int r_State = digitalRead(RIGHT_BUTTON);
     int o_State = digitalRead(OK_BUTTON);
-    
     _Button_State = 0;
     if (l_State)
         _Button_State |= 1ULL << LEFT_BUTTON;
@@ -546,11 +501,10 @@ bool Control::button_pressed(){
         _Button_State |= 1ULL << OK_BUTTON;
         
     if ( _Button_State != _Button_PrevState){
-       // println_w(_Button_State);
         _Button_PrevState = _Button_State;
-        if ( !(_Button_State & (1ULL << LEFT_BUTTON) ) ||
-             !(_Button_State & (1ULL << RIGHT_BUTTON) ) || 
-             !(_Button_State & (1ULL << OK_BUTTON)) ) {
+        if (  !(_Button_State & (1ULL << LEFT_BUTTON) ) ||
+              !(_Button_State & (1ULL << RIGHT_BUTTON) ) || 
+              !(_Button_State & (1ULL << OK_BUTTON)) ) {
           return true;
         }
     }
@@ -559,10 +513,15 @@ bool Control::button_pressed(){
 
 
 void Control::init_wakeup(){
+     esp_sleep_enable_ext0_wakeup(LEFT_BUTTON, 0);
+
+/*
     const uint64_t ext_wakeup_pin_1_mask = 1ULL << LEFT_BUTTON;
     const uint64_t ext_wakeup_pin_2_mask = 1ULL << RIGHT_BUTTON;
     const uint64_t ext_wakeup_pin_3_mask = 1ULL << OK_BUTTON;
     const uint64_t ext_wakeup_pin_mask = ext_wakeup_pin_1_mask | ext_wakeup_pin_2_mask | ext_wakeup_pin_3_mask;
 
     esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
+*/
+
 }

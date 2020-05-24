@@ -1,48 +1,27 @@
 #ifndef _HARDWARE_
 #define _HARDWARE_
 
+#include "sensors.hpp"
 #include <TimeLib.h>
-#include "MAX30100_PulseOximeter.h"
-#include "SPIFFS.h"
 #include "FS.h"
+#include "SPIFFS.h"
 #include <DS3231M.h>
-#include <BMI160Gen.h>
 #include <U8g2lib.h>
-
-#define _SERIAL_DEBUG_ 1
-#define _USE_MLX90615_ 1
-
-#if defined(_USE_MLX90614_)
-#include <SparkFunMLX90614.h>
-#elif defined(_USE_MLX90615_)
-#include <MLX90615.h>
-#endif
-
-
-#ifdef _SERIAL_DEBUG_
-#define print_w(a) (Serial.print(a))
-#define println_w(a) (Serial.println(a))
-#define write_w(a) (Serial.write(a))
-#else
-#define print_w(a) 
-#define println_w(a) 
-#define write_w(a) 
-#endif
 
 #define  CACHE_RECORD_CNT 10
 
 enum sensor_state_t{
-      SENSOR_GOTOSLEEP = 0,
-      SENSOR_SLEEPING,
-      SENSOR_AWAKE,
-      SENSOR_WRITE_RESULT
+    SENSOR_GOTOSLEEP = 0,
+    SENSOR_SLEEPING,
+    SENSOR_AWAKE,
+    SENSOR_WRITE_RESULT
 };
 static const char * sensor_state_name[] = { "SENSOR_GOTOSLEEP", "SENSOR_SLEEPING", "SENSOR_AWAKE", "SENSOR_WRITE_RESULT"  };
 
 enum control_state_t{
-      CONTROL_GOTOSLEEP = 0,
-      CONTROL_SLEEPING,
-      CONTROL_AWAKE,
+    CONTROL_GOTOSLEEP = 0,
+    CONTROL_SLEEPING,
+    CONTROL_AWAKE,
 };
 static const char * control_state_name[] = {"CONTROL_GOTOSLEEP", "CONTROL_SLEEPING", "CONTROL_AWAKE"};
 
@@ -56,32 +35,19 @@ static const char * esp_sleep_wake[] = {
     "ESP_SLEEP_WAKEUP_ULP",
     "ESP_SLEEP_WAKEUP_GPIO",
     "ESP_SLEEP_WAKEUP_UART"
-    };
+};
     
 struct StatRecord_t{
-      time_t   Time;
-      uint32_t Steps;
-      float    HeartRate;
-      float    SpO2;
-      float    AmbientTempC;
-      float    ObjectTempC;
-      float    Vcc;
+    time_t   Time;
+    uint32_t Steps;
+    float    HeartRate;
+    float    SpO2;
+    float    AmbientTempC;
+    float    ObjectTempC;
+    float    Vcc;
 };
 
-class Gyroscope {
-    private:
-        const int      i2c_addr = 0x69;
-        BMI160GenClass gyro;
-    public:
-        void init(bool is_after_deepsleep);
-        void update();
-        void sleep();
-        void wake();
-        uint16_t getStepCount();
-
-};
-
-class Display{
+class Display {
     private:
         const int REPORTING_PERIOD_MS = 1000;
         U8G2 _display;
@@ -100,12 +66,14 @@ class Display{
 
 class FileSystem {
     private:
-        bool    _can_write = false;
+        bool    _can_write = true; //false;
 
         File    _file;
         
         char *current_day_fname(char *inputBuffer, int inputBuffer_size, char *dir, int16_t year, int8_t month, int8_t  day);
         void save_records_to_file();
+        void list_dir(fs::FS &fs, const char * dirname);
+
     public:
         void init();
         void cat_file(File f);
@@ -116,17 +84,15 @@ class FileSystem {
 };
 
 class Control {
-    private:
-        //int Button_PrevState     = 0;
-        //int Button_State         = 0;
-        
+    private:        
         uint64_t _Button_State      = 0;
-        uint64_t _Button_PrevState = 0;
+        uint64_t _Button_PrevState  = 0;
         
         gpio_num_t LEFT_BUTTON          = GPIO_NUM_14;
         gpio_num_t RIGHT_BUTTON         = GPIO_NUM_33;
         gpio_num_t OK_BUTTON            = GPIO_NUM_27;
 
+        void print_button_state (const char *func_name, uint32_t line_number, int l_State, int r_State, int o_State );
     public:
         void init();
         bool button_pressed();
@@ -135,17 +101,16 @@ class Control {
  
 class Hardware {
     private:
-#if defined(_USE_MLX90614_)
-        IRTherm         therm;
-#elif defined(_USE_MLX90615_)
-        MLX90615        therm;
-#endif
+        Gyroscope       sGyro;
+        ThermoMeter     sTerm;
+        PulseMeter      sPulse;
+        CurrentMeter    sCurrent;
+        
         DS3231M_Class   DS3231M;
         Display         display;
-        PulseOximeter   pulse;
-        FileSystem      log_file;
-        Gyroscope       gyroscope;
         Control         control;
+        FileSystem      log_file;
+
         time_t          current_time;
          
         bool is_after_deepsleep = false;
@@ -154,23 +119,24 @@ class Hardware {
         uint32_t displaySleepDelay = 3000;
         uint32_t displaySleepTimer = 0;
 
+        bool debug_trace_fsm = false;
         bool powerSave = false;
- 
-        void thermometer_init();
-        void display_init();
+
+        void init_sensors();
         void time_init();
+        void display_init();
         void filesystem_init();
         void serial_init();
-        void pulse_init();
 
         int  next_wake_time();
         void WakeSensors() ;
         void GoToSleep() ;
+
+        void          read_sensors();
         StatRecord_t *current_sensor_data(StatRecord_t *record);
         StatRecord_t *get_last_sensor_data ();
 
-        
-        float get_redable_vcc();
+        void  print_all_stat();
         void  print_stat(StatRecord_t *record);
         void  print_fsm_state(const char *func_name, uint32_t line_number);
 
