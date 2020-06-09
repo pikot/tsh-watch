@@ -91,10 +91,10 @@ void Hardware::init() {
          ControlState = CONTROL_AWAKE;
     }
     
-    sTerm.init(); // MLX9061* demands magic with  wire pins, so - it should run first alltime :/
+    sTerm.init(); // MLX9061* demands magic with  wire pins, so - it should run first, alltime :/
     time_init();  // timer should work alltime
     sCurrent.init(); // anyway i want to trace battery
-
+    sGyro.init(is_after_deepsleep);  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
     if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
          SensorState = SENSOR_AWAKE;
     }
@@ -113,7 +113,6 @@ void Hardware::init() {
 void Hardware::init_sensors() {
     sPulse.init();
     log_file.init();
-    sGyro.init(is_after_deepsleep);
 }
 
 void Hardware::print_fsm_state( const char *func_name, uint32_t line_number) {
@@ -171,9 +170,10 @@ void Hardware::update() {
  //   print_fsm_state( __func__, __LINE__);
  
     if ( CONTROL_AWAKE == ControlState ){
+        sGyro.read_data(); // ugly, read data only for prdometer debug
         StatRecord_t * r  = get_last_sensor_data();
-        display.update(r->ObjectTempC , r->HeartRate, r->Steps); 
-    }
+        display.update(r->ObjectTempC, r->HeartRate, sGyro.StepCount());  // return r->Step after debug
+     }
     if ( SENSOR_WRITE_RESULT == SensorState ) {
         StatRecord_t current_rec;
         memset(&current_rec, 0, sizeof(current_rec));
