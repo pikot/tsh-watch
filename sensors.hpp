@@ -50,7 +50,7 @@ class GyroscopeBMI160 : public Sensor {
         int32_t  steps;
     public:
         GyroscopeBMI160();
-        void init(bool is_after_deepsleep);
+        void init(bool clearStep);
         void update();
         void sleep();
         void wake();
@@ -71,7 +71,7 @@ class GyroscopeLSM6DS3 : public Sensor {
     public:
         GyroscopeLSM6DS3();
         ~GyroscopeLSM6DS3();
-        void init(bool is_after_deepsleep);
+        void init(bool clearStep);
         void update();
         void sleep();
         void wake();

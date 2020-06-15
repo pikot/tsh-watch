@@ -14,7 +14,7 @@ RTC_DATA_ATTR time_t next_scan_time = 0;
 RTC_DATA_ATTR time_t next_scan_time_stop = 0;
 RTC_DATA_ATTR StatRecord_t RTC_RECORDS[CACHE_RECORD_CNT];
 RTC_DATA_ATTR uint8_t StatRecord_cnt = 0;
-
+RTC_DATA_ATTR int8_t  today  = 0;
 String twoDigits(int digits) {
     if (digits < 10) {
         String i = '0'+String(digits);
@@ -40,7 +40,7 @@ void Hardware::time_init(){
         delay(3000);
     }
     println_w(F("DS3231M initialized."));                                  //                                  //
-  //  DS3231M.adjust();                                                           // Set to library compile Date/Time //
+    //DS3231M.adjust();                                                           // Set to library compile Date/Time //
     DateTime _now = DS3231M.now();                                               // get the current time             //
     setTime(_now.unixtime());
 
@@ -69,7 +69,14 @@ bool Hardware::is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason) {
     }
     return status;
 }
-
+bool Hardware::is_new_day(){
+    print_w("is_new = " );print_w(today);print_w(" " ); print_w(day()); print_w("\n" );
+    if (today != day()){
+         today = day();
+         return true;
+    }
+    return false;
+}
 void Hardware::init() {
     setCpuFrequencyMhz(80);
     displaySleepTimer = millis();
@@ -94,7 +101,8 @@ void Hardware::init() {
     sTerm.init(); // MLX9061* demands magic with  wire pins, so - it should run first, alltime :/
     time_init();  // timer should work alltime
     sCurrent.init(); // anyway i want to trace battery
-    sGyro.init(is_after_deepsleep);  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
+    bool clearStep = ( !is_after_deepsleep || is_new_day() ) ;
+    sGyro.init(clearStep);  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
     if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
          SensorState = SENSOR_AWAKE;
     }

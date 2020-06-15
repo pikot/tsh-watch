@@ -112,6 +112,7 @@ class Hardware {
         FileSystem      log_file;
 
         time_t          current_time;
+        
          
         bool is_after_deepsleep = false;
      
@@ -127,6 +128,7 @@ class Hardware {
         void display_init();
         void filesystem_init();
         void serial_init();
+        
 
         int  next_wake_time();
         void WakeSensors() ;
@@ -141,7 +143,7 @@ class Hardware {
         void  print_fsm_state(const char *func_name, uint32_t line_number);
 
         bool is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason);
- 
+        bool is_new_day();
     public:
         void init();
         void update();

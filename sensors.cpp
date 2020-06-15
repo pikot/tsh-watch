@@ -7,10 +7,10 @@ GyroscopeBMI160::GyroscopeBMI160() {
     steps = 0;
 }
 
-void GyroscopeBMI160::init(bool is_after_deepsleep) {
+void GyroscopeBMI160::init(bool clearStep) {
     inited = false;
 KK
-    gyro.begin(BMI160GenClass::I2C_MODE, Wire, i2c_addr, 2, is_after_deepsleep);
+    gyro.begin(BMI160GenClass::I2C_MODE, Wire, i2c_addr, 2, !clearStep); // !clearStep --  after deep sleep other init logic 
     bool sce = gyro.getStepCountEnabled();
     uint8_t sdm = gyro.getStepDetectionMode();
 
@@ -59,7 +59,7 @@ GyroscopeLSM6DS3::GyroscopeLSM6DS3() {
 GyroscopeLSM6DS3::~GyroscopeLSM6DS3(){
     free(gyro);
 }
-void GyroscopeLSM6DS3::init(bool is_after_deepsleep) {
+void GyroscopeLSM6DS3::init(bool clearStep) {
     inited = false;
     gyro = new LSM6DS3Core( I2C_MODE, i2c_addr );
 
@@ -90,8 +90,8 @@ void GyroscopeLSM6DS3::init(bool is_after_deepsleep) {
   
     // Enable embedded functions -- ALSO clears the pdeo step count
     int flag10 = 0x3C; //  all except reset pedometer
-   // if (!is_after_deepsleep) 
-     //     flag10 |= LSM6DS3_ACC_GYRO_PEDO_RST_STEP_ENABLED; // up reset flag
+    if ( clearStep ) 
+          flag10 |= LSM6DS3_ACC_GYRO_PEDO_RST_STEP_ENABLED; // up reset flag
           
     errorAccumulator += gyro->writeRegister(LSM6DS3_ACC_GYRO_CTRL10_C, flag10);
     // Enable pedometer algorithm
