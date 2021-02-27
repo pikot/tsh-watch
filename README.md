@@ -30,6 +30,13 @@ and add
 - humidity sensor and barometer bme289
 - GPS L80-R or GP-1/2 (if can find proper place on pcb for antenn)
 
+
+Current consumption of watches now ~2mAh
+
+this is graph for 130mAh battary
+
+![vcc graph](http://vesovoy-control.ru/tsh_watch_foto/VCC.png)
+
 Development process and plains
 
 https://github.com/pikot/tsh-watch/projects/1
