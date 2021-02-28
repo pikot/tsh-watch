@@ -1,63 +1,49 @@
 #include "hardware.hpp"
 
-#if defined(_USE_MLX90615_)
-#include <MLX90615.h>
-#endif
-
-#include <esp_wifi.h>
-#include <esp_bt.h>
-
 RTC_DATA_ATTR uint8_t SensorState = SENSOR_AWAKE;
 RTC_DATA_ATTR uint8_t ControlState = CONTROL_AWAKE;
 
-RTC_DATA_ATTR time_t next_scan_time = 0;
-RTC_DATA_ATTR time_t next_scan_time_stop = 0;
-RTC_DATA_ATTR StatRecord_t RTC_RECORDS[CACHE_RECORD_CNT];
-RTC_DATA_ATTR uint8_t StatRecord_cnt = 0;
+RTC_DATA_ATTR time_t nextScanTime = 0;
+
 RTC_DATA_ATTR int8_t  today  = 0;
-String twoDigits(int digits) {
-    if (digits < 10) {
-        String i = '0'+String(digits);
-        return i;
-    }
-    else {
-        return String(digits);
-    }
+
+RTC_DATA_ATTR float    ina219_current = 0;
+RTC_DATA_ATTR uint32_t ina219_current_cnt = 0;
+
+//RTC_DATA_ATTR time_t   wifi_last_connect = 0; 
+//RTC_DATA_ATTR bool     force_wifi_connection = true;
+RTC_DATA_ATTR uint8_t   lastSkimlogUpdateHour = 0;
+
+void printPinStatus() 
+{
+      for (int i = 0; i < 20; i++) { 
+           int _State = digitalRead(i);
+
+           print_w("status: pin ");
+           print_w(i);     print_w(" - "); print_w(_State);     println_w("");  
+      }
 }
 
-void Hardware::serial_init(){
+void Hardware::serialInit()
+{
 #ifdef _SERIAL_DEBUG_
     Serial.begin(115200);
     Serial.flush();
 #endif
 }
 
-void Hardware::time_init(){
-    const uint8_t  SPRINTF_BUFFER_SIZE =     32;                                  // Buffer size for sprintf()        //
-    char          inputBuffer[SPRINTF_BUFFER_SIZE];                               // Buffer for sprintf()/sscanf()    //
-    while (!DS3231M.begin()) {                                                 
-        println_w(F("Unable to find DS3231MM. Checking again in 3s."));      
-        delay(3000);
-    }
-    println_w(F("DS3231M initialized."));                                  //                                  //
-    //DS3231M.adjust();                                                           // Set to library compile Date/Time //
-    DateTime _now = DS3231M.now();                                               // get the current time             //
-    setTime(_now.unixtime());
+void Hardware::timeInit()
+{
+    sTime.init();
+    sTime.read();
 
-    sprintf(inputBuffer,"%04d-%02d-%02d %02d:%02d:%02d", _now.year(),            // Use sprintf() to pretty print    //
-          _now.month(), _now.day(), _now.hour(), _now.minute(), _now.second());    // date/time with leading zeros     //
-    println_w(inputBuffer);                                                // Display the current date/time    //
-    //print_w(F("DS3231M chip temperature is "));                            //                                  //
-    //print_w( DS3231M.temperature() / 100.0, 1);                                // Value is in 100ths of a degree   //
-  //  println_w("\xC2\xB0""C");   
-    current_time = now();
+    currentTime = sTime.currentTime();
 }
 
-bool Hardware::is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason) {
-  
+bool Hardware::isWakeByDeepsleep(esp_sleep_wakeup_cause_t wakeupReason) 
+{
     bool status = false;
-    switch(wakeup_reason)
-    {
+    switch (wakeupReason) {
         case 1  : 
         case 2  : 
         case 3  : 
@@ -69,398 +55,619 @@ bool Hardware::is_wake_by_deepsleep(esp_sleep_wakeup_cause_t wakeup_reason) {
     }
     return status;
 }
-bool Hardware::is_new_day(){
-    print_w("is_new = " );print_w(today);print_w(" " ); print_w(day()); print_w("\n" );
-    if (today != day()){
+
+bool Hardware::isNewDay()
+{
+    if (today != day()) {
          today = day();
          return true;
     }
     return false;
 }
-void Hardware::init() {
+
+
+void Hardware::init() 
+{
     setCpuFrequencyMhz(80);
+    esp_deep_sleep_disable_rom_logging();
+
     displaySleepTimer = millis();
-
-    esp_sleep_wakeup_cause_t wakeup_reason = esp_sleep_get_wakeup_cause();
     
-    serial_init();
-    print_fsm_state( __func__, __LINE__ );
+    wakeupReason      = esp_sleep_get_wakeup_cause();
+    isAfterDeepsleep  = isWakeByDeepsleep(wakeupReason);
 
-    is_after_deepsleep = is_wake_by_deepsleep(wakeup_reason);
-    if (false == is_after_deepsleep) {
-        memset(&RTC_RECORDS, 0, sizeof(StatRecord_t));
+    serialInit();
+    SPIFFS.begin(true); // need for logs or config 
+
+    cfg.init(); // cfg -> settings
+    updateFromConfig(); // cfg -> hardware///  yep, pretty sheety and best case scenario is to have one place to sync directly
+
+    printFsmState( __func__, __LINE__ );
+    if (false == isAfterDeepsleep) {
+        memset(&RTC_RECORDS, 0, sizeof(statRecord_t));
+
+        setupUlp( wakeupReason );
+        runUlp();
     }
-    print_all_stat(); //!!!!!!!!!!!!!!!!!!
-    print_w("wakeup_reason ");  println_w( esp_sleep_wake[wakeup_reason] );
-    print_w("StatRecord_cnt "); println_w( StatRecord_cnt );
+    
+   // print_all_stat(); //!!!!!!!!!!!!!!!!!!
+    printf_w("wakeupReason %s, statRecord_cnt %d\n",  espSleepWake[wakeupReason], statRecord_cnt );
 
-    if ( CONTROL_SLEEPING == ControlState && ESP_SLEEP_WAKEUP_EXT0 == wakeup_reason ){
+    if (CONTROL_SLEEPING == ControlState && ESP_SLEEP_WAKEUP_EXT0 == wakeupReason)
          ControlState = CONTROL_AWAKE;
-    }
-    
-    sTerm.init(); // MLX9061* demands magic with  wire pins, so - it should run first, alltime :/
-    time_init();  // timer should work alltime
-    sCurrent.init(); // anyway i want to trace battery
-    bool clearStep = ( !is_after_deepsleep || is_new_day() ) ;
-    sGyro.init(clearStep);  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
-    if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
+
+    timeInit();  // timer should work alltime
+
+    if (SENSOR_SLEEPING == SensorState && nextScanTime <= currentTime) 
          SensorState = SENSOR_AWAKE;
+    
+    initSensors();
+    if (CONTROL_AWAKE == ControlState) {
+        display.init();
+        control.init();
     }
     
-    if ( SENSOR_AWAKE == SensorState  ) {
-        init_sensors(); 
-    }
-    if ( CONTROL_AWAKE == ControlState ) {
-        display.init();
-        control.init();   
-    }
-
-    print_fsm_state( __func__, __LINE__);
+    printFsmState( __func__, __LINE__);    
 }
 
-void Hardware::init_sensors() {
+void Hardware::initSensors() 
+{
+    sTerm.init(); 
+    sCurrent.init(&ina219_current); 
     sPulse.init();
+    sGyro.init();  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
+       
     log_file.init();
+    printFsmState( __func__, __LINE__);    
 }
 
-void Hardware::print_fsm_state( const char *func_name, uint32_t line_number) {
-    if (!debug_trace_fsm)
+///   https://www.analog.com/media/en/analog-dialogue/volume-44/number-2/articles/pedometer-design-3-axis-digital-acceler.pdf
+void Hardware::printFsmState( const char *funcName, uint32_t lineNumber) 
+{
+    if (!debugTraceFsm)
         return;
-    print_w( func_name );       print_w(":");    print_w( line_number );     print_w("\t");
+    print_w( funcName );       print_w(":");    print_w( lineNumber );     print_w("\t");
     print_w("SensorState: ");   print_w( sensor_state_name[SensorState] );   print_w("\t");
     print_w("ControlState: ");  print_w( control_state_name[ControlState] ); print_w("\t");
     println_w();
 }
 
-void Hardware::print_stat(StatRecord_t *record) {
-    print_w("Steps: ");     print_w( record->Steps );  print_w("\t");
-    print_w("Heart rate: ");print_w( record->HeartRate ); print_w("bpm / ");
-    print_w("SpO2: ");      print_w( record->SpO2);       print_w("%\t");
-    print_w("Ambient: ");   print_w( record->AmbientTempC ); print_w("*C\t");
-    print_w("Object: ");    print_w( record->ObjectTempC );  print_w("*C\t");
-    print_w("Vcc: ");       print_w( record->Vcc ) ;
-    println_w();
+void Hardware::printStat(statRecord_t *record) 
+{
+    printf_w("Stat:  Time '%d' Steps '%d', Heart rate '%f', SpO2: '%f', Ambient: '%f', Object: '%f', Vcc: '%f'\n",
+          record->Time,
+          record->Steps, record->HeartRate, record->SpO2, 
+          record->AmbientTempC, record->ObjectTempC, record->Vcc 
+    );
 }
-void Hardware::print_all_stat() {
-    println_w("print_all_stat");
-    for (int i = 0; i < CACHE_RECORD_CNT; i++){
-        print_w( i ); print_w( ". ");
-         print_stat(&RTC_RECORDS[i]);
+
+void Hardware::printAllStat() 
+{
+    println_w("printAllStat");
+    for (int i = 0; i < CACHE_RECORD_CNT; i++) {
+         print_w( i ); print_w( ". ");
+         printStat(&RTC_RECORDS[i]);
     }
     println_w();
 }
 
-void Hardware::read_sensors(){
-    sGyro.read_data();
-    sTerm.read_data();
-    sPulse.read_data();
-    sCurrent.read_data();
+void Hardware::readSensors()
+{
+    sGyro.read();
+    sTerm.read();
+    sPulse.read();
+    sCurrent.read();
 }
 
-void Hardware::update() {
-    current_time = now();
-   
-    if ( SENSOR_SLEEPING == SensorState && next_scan_time <= current_time ) {
+void Hardware::updateSkimlog() 
+{
+    printf_w("updateSkimlog hour %d, last_hour %d\n", hour(), lastSkimlogUpdateHour);
+
+    if (hour() == lastSkimlogUpdateHour) 
+          return;
+    
+    SkimData *skim_log = new  SkimData(  day(), month(), year() );
+    skim_log->process();
+    free(skim_log);
+    lastSkimlogUpdateHour = hour();
+}
+    
+void Hardware::update() 
+{
+    currentTime = now();
+    
+    if (CONTROL_WIFI_INIT == ControlState)
+        wm.process();
+   /* --- return after  test 
+    if ( SENSOR_SLEEPING == SensorState && nextScanTime <= currentTime ) {
          SensorState = SENSOR_AWAKE;
          init_sensors();
     }
-  //  print_fsm_state( __func__, __LINE__);
-
-    if ( SENSOR_AWAKE == SensorState && (next_scan_time + pulse_threshold) <= current_time ) {
-         SensorState = SENSOR_WRITE_RESULT;
-    }
-  //  print_fsm_state( __func__, __LINE__);
-
-    if ( SENSOR_AWAKE == SensorState ) { // start collect and process data 
-        sPulse.update();    
-        sTerm.update();
-    }
- //   print_fsm_state( __func__, __LINE__);
+     */
  
-    if ( CONTROL_AWAKE == ControlState ){
-        sGyro.read_data(); // ugly, read data only for prdometer debug
-        StatRecord_t * r  = get_last_sensor_data();
-        display.update(r->ObjectTempC, r->HeartRate, sGyro.StepCount());  // return r->Step after debug
-     }
-    if ( SENSOR_WRITE_RESULT == SensorState ) {
-        StatRecord_t current_rec;
-        memset(&current_rec, 0, sizeof(current_rec));
-        current_sensor_data(&current_rec);
+    if (SENSOR_AWAKE == SensorState) 
+         SensorState = SENSOR_WRITE_RESULT;
+   
+    printFsmState( __func__, __LINE__);
+ 
+    if (CONTROL_AWAKE == ControlState) {
+        sGyro.read(); // ugly, read data only for prdometer 
+        sCurrent.read();
         
-        log_file.write_log( &current_rec );
-        print_stat(&current_rec);
-        int next_wake  = next_wake_time();
-        next_scan_time = current_time + next_wake;
-        SensorState    = SENSOR_GOTOSLEEP;
+        statRecord_t *r = getLastSensorsData();
+        display.update(r->ObjectTempC, r->HeartRate, sGyro.getStepCount(), sCurrent.getBatLevel(), &graph);  // return r->Step after debug
     }
-  //  print_fsm_state( __func__, __LINE__);
+     
+    if (SENSOR_WRITE_RESULT == SensorState) {
+        statRecord_t current_rec;
+        memset(&current_rec, 0, sizeof(current_rec));
+        getCurrentSensorsData(&current_rec);
+
+        log_file.writeLog( &current_rec ); ///!!!!!!!!!!!!!! return this string
+        /* --- return after  test     */
+
+        int next_wake  = nextWakeTime();
+        nextScanTime = currentTime + next_wake;
+        SensorState    = SENSOR_GOTOSLEEP;
+        updateSkimlog();
+    }
 }
 
-int Hardware::next_wake_time(){
+int Hardware::nextWakeTime()
+{
     int rest = minute() % 1; 
     
     return (60 * rest) + 60 - second();
 }
 
-void Hardware::WakeSensors() {
-    powerSave = false;
-    display.setPowerSave(powerSave); // off 4 test
-    sPulse.wake();
-    sCurrent.wake();
-}
-
-void Hardware::GoToSleep() {
-    if ( CONTROL_GOTOSLEEP == ControlState ) {
-        powerSave = true;
+void Hardware::goToSleep() 
+{
+    if (CONTROL_GOTOSLEEP == ControlState) {
+        powerSave = true; 
         display.setPowerSave(powerSave);
         ControlState = CONTROL_SLEEPING;
     }
-    
-    if ( SENSOR_GOTOSLEEP == SensorState ) {
-        sPulse.sleep();
-        // term should go in sleep last, because 2 sleep need manipulation with scl and sda 
+
+    if (SENSOR_GOTOSLEEP == SensorState) {
         log_file.close(); 
+
         SensorState = SENSOR_SLEEPING;
     }
 
-    if ( (CONTROL_SLEEPING == ControlState) && (SENSOR_SLEEPING == SensorState) ) {
-        sCurrent.sleep();
-        sTerm.sleep(); 
+    if ((CONTROL_SLEEPING == ControlState) && (SENSOR_SLEEPING == SensorState)) {
+        cfg.save();
+        control.initWakeup();
 
-        control.init_wakeup();
-
-        int next_wake = next_wake_time();
-        print_w("next_wake ");  println_w(next_wake);  
+        int next_wake = nextWakeTime();
+        printf_w("next_wake %d\n", next_wake);
 
    // esp_wifi_stop();
   // esp_bt_controller_disable();
-        esp_sleep_enable_timer_wakeup(next_wake * 1e6);
-        esp_deep_sleep_start();
+        ESP_ERROR_CHECK(esp_sleep_enable_timer_wakeup(next_wake * 1e6));
+     //   ESP_ERROR_CHECK( esp_sleep_enable_ulp_wakeup() );
 
+        esp_deep_sleep_start();
     }
 }
 
-StatRecord_t *Hardware::current_sensor_data(StatRecord_t *record) {
-    read_sensors();
+statRecord_t *Hardware::getCurrentSensorsData(statRecord_t *record) 
+{
+    readSensors();
 
-    //StatRecord_t record;
-    record->Time         = current_time; 
-    record->Steps        = sGyro.StepCount();
-    record->HeartRate    = sPulse.HeartRate();
-    record->SpO2         = sPulse.SpO2();
-    record->AmbientTempC = sTerm.AmbientC(); 
-    record->ObjectTempC  = sTerm.ObjectC();
-    record->Vcc          = sCurrent.Vcc();
+    //statRecord_t record;
+    record->Time         = currentTime; 
+    record->Steps        = sGyro.getStepCount();
+    record->HeartRate    = sPulse.getHeartRate();
+    record->SpO2         = sPulse.getSpO2();
+    record->AmbientTempC = sTerm.getAmbientC(); 
+    record->ObjectTempC  = sTerm.getObjectC();
+    record->Vcc          = sCurrent.getVcc();
 
     return record;
 }
 
-StatRecord_t *Hardware::get_last_sensor_data() {
+statRecord_t *Hardware::getLastSensorsData() 
+{
     uint8_t used_item = 0;
-    if (0 == StatRecord_cnt)
+    if (0 == statRecord_cnt)
         used_item = CACHE_RECORD_CNT - 1;
     else 
-        used_item = StatRecord_cnt - 1;
+        used_item = statRecord_cnt - 1;
     
-    if ( false == is_after_deepsleep )
+    if (false == isAfterDeepsleep)
         used_item = 0;
 
-    print_fsm_state( __func__, __LINE__);
- //   print_w("used_item "); println_w( used_item ); //print_w(", ");
-    print_stat(  &RTC_RECORDS[ used_item ] );
+    printStat(&RTC_RECORDS[ used_item ]);
     return &RTC_RECORDS[used_item];
 }
 
-void Hardware::power_safe_logic() {
-    print_fsm_state( __func__, __LINE__);
+struct tm * Hardware::changeDayFile(int32_t _day) 
+{
+     time_t _temp_date = graph.getDate() + _day * 86400;
+     
+     struct tm *tmstruct = localtime(&_temp_date); 
+     int32_t  y = (tmstruct->tm_year) + 1900;
+     int32_t  m = (tmstruct->tm_mon) + 1;
+     int32_t  d = tmstruct->tm_mday;
+     char fname[64];
+     int32_t fname_len = log_file.filenameDate(fname, sizeof(fname), y, m, d); 
+     if (fname_len > 0) {
+         bool exist =  SPIFFS.exists(fname);
+         if (exist) {
+               tmstruct->tm_hour = 0;
+               tmstruct->tm_min = 0;
+               tmstruct->tm_sec = 0;
 
-    if ( control.button_pressed() ) {  // Call code  button transitions from HIGH to LOW
+               tmElements_t tme = toTmElement(tmstruct);
+               time_t new_time =  makeTime(tme);
+               graph.setDate( new_time) ;
+               return tmstruct;
+         }
+     }
+     return NULL;
+}
 
-        if (CONTROL_SLEEPING == ControlState) { 
-                    display.init();
-        } 
+
+struct tm * Hardware::loadNextDayFile() 
+{ 
+    return changeDayFile(+1);
+}
+
+struct tm * Hardware::loadPrevDayFile() 
+{
+    return changeDayFile(-1);
+}
+
+void Hardware::runActivity(uint64_t _buttons) 
+{
+    displayActivity_t _activity = display.getCurrentActivity();
+    if (WATCH_ACTICITY == _activity) {
+         bool pressed_menu = !(_buttons & (1ULL << control.pinRight())) ?  true : false;
+         if (true == pressed_menu) {
+              cfg.setCurrenDayTimeToMenu();
+              display.setCurrentActivity(ICON_MENU_MAIN_ACTIVITY);
+         }
+    }
+    else
+    if (GRAPH_BODY_TEMP_ACTIVITY == _activity || 
+        GRAPH_STEPS_ACTIVITY == _activity) {
+         bool pressed_menu = !(_buttons & ( 1ULL << control.pinOk() ) ) ?  true : false;
+         bool pressed_Left = !(_buttons & ( 1ULL << control.pinLeft() ) ) ?  true : false;
+         bool pressed_Right= !(_buttons & ( 1ULL << control.pinRight() ) ) ?  true : false;
+
+         if (true == pressed_menu) {
+   //               renderer.giveBackDisplay();
+              display.setCurrentActivity(ICON_MENU_MAIN_ACTIVITY);
+              
+             // menuMgr.setCurrentMenu(menuMgr.getParentAndReset());
+              returnToMenu();
+
+         }
+         else if (true == pressed_Left) {
+              struct tm *_day = loadNextDayFile();
+              if (_day != NULL) {
+                   int32_t  y = (_day->tm_year) + 1900;
+                   int32_t  m = (_day->tm_mon) + 1;
+                   int32_t  d = _day->tm_mday;
+                   
+                   prepareGraphData(_activity, d, m, y);
+              }
+         }
+         else if (true == pressed_Right) {
+              struct tm *_day = loadPrevDayFile();
+              if (_day != NULL) {
+                   int32_t  y = (_day->tm_year) + 1900;
+                   int32_t  m = (_day->tm_mon) + 1;
+                   int32_t  d = _day->tm_mday;
+                  prepareGraphData(_activity, d, m, y);
+              }
+         }
+    }
+    else
+    if(SETTINGS_ACTIVITY == _activity){ 
+    }
+}
+
+void Hardware::prepareGraphData(displayActivity_t act, int32_t _day,  int32_t _month,  int32_t _year)
+{
+    if (!IS_GRAPH_ACTIVITY(act)) 
+        return;
+        
+    skimrecord_idx_t        rec_idx;
+    char                pattern_irl[32];
+    displayAsixType_t     asixType;
+    
+    if (GRAPH_BODY_TEMP_ACTIVITY == act) {
+         rec_idx   = SKIMREC_OBJT_IDX ;
+         snprintf(pattern_irl, sizeof(pattern_irl), "my body t\xB0: %d.%02d.%02d", _day, _month, _year % 100 );  
+         asixType = SHOW_FLOAT_TYPE;
+    }
+    if (GRAPH_STEPS_ACTIVITY == act) {
+         rec_idx   = SKIMREC_STEPS_IDX;
+         snprintf(pattern_irl, sizeof(pattern_irl), "my steps : %d.%02d.%02d", _day, _month, _year % 100 );  
+         asixType = SHOW_INT_TYPE;
+    }
+
+    graph.setTitle(String(pattern_irl));
+
+    SkimData *skim_log = new  SkimData(_day, _month, _year);
+    skim_log->process();
+    hourStat_t *stat = skim_log->getStat();
+    
+    graph.setData( stat, rec_idx, asixType);
+    free(skim_log);
+}
+
+
+struct tm * Hardware::takeLogDayFile(unsigned int curValue) 
+{
+     time_t _temp_date = now() - curValue * 86400; //  can shit fappened in case new day 
+     
+     struct tm *tmstruct = localtime(&_temp_date); 
+     int32_t  y = (tmstruct->tm_year) + 1900;
+     int32_t  m = (tmstruct->tm_mon) + 1;
+     int32_t  d = tmstruct->tm_mday;
+     char fname[64];
+     int32_t fname_len = log_file.filenameDate(fname, sizeof(fname), y, m, d); 
+     if (fname_len > 0) {
+         bool exist =  SPIFFS.exists(fname);
+         if (exist) {
+               tmstruct->tm_hour = 0;
+               tmstruct->tm_min = 0;
+               tmstruct->tm_sec = 0;
+               
+               tmElements_t tme = toTmElement(tmstruct);
+               time_t new_time =  makeTime(tme);
+               graph.setDate(new_time) ;
+               return tmstruct;
+         }
+     }
+     return NULL;
+}
+
+void Hardware::start_graph_logic(displayActivity_t _activity, unsigned int curValue)
+{
+    if (curValue == graph.encoderVal)
+        return;
+    graph.encoderVal = curValue;
+    
+    struct tm *_day = takeLogDayFile(curValue);
+    if (_day != NULL) {
+        int32_t  y = (_day->tm_year) + 1900;
+        int32_t  m = (_day->tm_mon) + 1;
+        int32_t  d = _day->tm_mday;
+        prepareGraphData(_activity, d, m, y );
+    }
+}
+
+void Hardware::showGraph() 
+{
+    display.graphDraw(&graph);
+}
+        
+
+void Hardware::showActivity(displayActivity_t act) 
+{
+    if (GRAPH_BODY_TEMP_ACTIVITY == act || GRAPH_STEPS_ACTIVITY == act) {
+        prepareGraphData(act, day(), month(), year());
+        graph.setDate(day(), month(), year(), weekday()) ;
+    }
+     
+    display.setCurrentActivity(act);
+}
+
+void Hardware::runPowerSafe() 
+{
+    printFsmState(__func__, __LINE__);
+    printUlpStatus();
+    if (control.buttonPressed()) {  // Call code  button transitions from HIGH to LOW
+        if (CONTROL_SLEEPING == ControlState)  
+            display.init();
+        
+        uint64_t _buttons = control.buttons();
+
+        runActivity(_buttons);
         ControlState = CONTROL_AWAKE;
 
         displaySleepTimer = millis();
     }
-/*
-    print_w("millis ");print_w(millis());          print_w("\t");
-    print_w("displaySleepTimer ");print_w(displaySleepTimer); print_w("\t");
-    print_w("diff ");print_w((millis() - displaySleepTimer)); print_w("\t");
-    print_w("displaySleepDelay ");print_w(displaySleepDelay); println_w("");
-*/
 
-    if ( (CONTROL_AWAKE == ControlState) && 
-         ((millis() - displaySleepTimer) > displaySleepDelay) ) {
+    if ((CONTROL_AWAKE == ControlState) && 
+         ((millis() - displaySleepTimer) > displaySleepDelay)) 
         ControlState = CONTROL_GOTOSLEEP;
+    
+   // sleep(1);
+    goToSleep();
+}
+
+//---- settings => config logic
+void Hardware::setTime(TimeStorage tm) 
+{
+    sTime.updateTime(tm.hours, tm.minutes, tm.seconds);
+}
+
+void Hardware::setDate(DateStorage dt) 
+{
+    sTime.updateDate(dt.day,  dt.month, dt.year);
+}
+
+void Hardware::setTimezone(int tz, bool need_save) 
+{
+    sTime.setTimeZone(enumIntTimeZone[tz]);
+    if (true == need_save) {
+        cfg.setTimezone(tz);
+        cfg.setSaveFlag(need_save);
+    } 
+}
+
+void Hardware::setTempSwitch(bool val, bool need_save)
+{
+    if (val) 
+        sTerm.wake();
+    else 
+        sTerm.sleep();
+    if (true == need_save) {
+        cfg.setTempSensorSwitch(val);
+        cfg.setSaveFlag(need_save);
     }
-    GoToSleep();
+}
+
+void Hardware::setPedoSwitch(bool val, bool need_save)
+{
+    if (val) 
+        sGyro.wake();
+    else 
+        sGyro.sleep();
+    if (true == need_save) {
+        cfg.setStepSensorSwitch(val);
+        cfg.setSaveFlag(need_save);
+    }
+}
+
+void Hardware::updateFromConfig()
+{
+    setTempSwitch(cfg.getTempSensorSwitch(), false);
+    setPedoSwitch(cfg.getStepSensorSwitch(), false);
+    setTimezone(cfg.getTimezone(), false);
 }
 
 
-//============================================================================================
-// File System
+void onDialogFinished(ButtonType btnPressed, void* /*userdata*/)
+{        
+    if (btnPressed == BTNTYPE_CLOSE) {
+//             Serial.printf("\n\n\n---------------------------------- onDialogFinished BTNTYPE_CLOSE --------------------------------\n\n\n");
+    }
+  //  Serial.printf("\n\n\n---------------------------------- onDialogFinished  --------------------------------\n\n\n");
+}
 
-void FileSystem::init(){
-    SPIFFS.begin(true);
+void Hardware::syncTimeViaWifi()
+{
+    display.showSyncTimeMessage(onDialogFinished);
+
+    getTimeOverWifi();
+}
+
+
+void Hardware::updateWebApiConfig()
+{
+    cfg.setServerUid(api_uid_server->getValue());
+    cfg.setServerToken(api_key_server->getValue());
+    cfg.setServerAddr(api_addr_server->getValue());
+
+    cfg.setSaveFlag(true);
+}
+
+void Hardware::showWifiPortal()
+{
+    display.showWifiPortalMessage(onDialogFinished);
+
+    WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP        
+    //reset settings - wipe credentials for testing
+    //wm.resetSettings();
+   // wm.setTimeout(120);
+    wm.setConfigPortalBlocking(false);
+
+    wm.setSaveConfigCallback(saveWifiConfigCallback);
+    wm.setBreakAfterConfig(true);
+
+    if (!api_uid_server) {
+          char * uid = cfg.getServerUid();
+          api_uid_server = new WiFiManagerParameter("API_uid", "API uid", uid, UID_SIZE);
+    }
+    if (!api_key_server) {
+          char * key = cfg.getServerToken();
+          api_key_server = new WiFiManagerParameter("API_key", "API key", key, TOKEN_SIZE);
+    }
+    if (!api_addr_server) {
+          char * addr = cfg.getServerAddr();
+          api_addr_server = new WiFiManagerParameter("STAT_srv", "Statistics server", addr, SERVER_ADDR_SIZE);
+    }
+
+    wm.addParameter(api_addr_server);
+    wm.addParameter(api_uid_server);
+    wm.addParameter(api_key_server);
+
+    if (!wm.startConfigPortal(wifi_ap_name, NULL)) {
+        ControlState = CONTROL_WIFI_INIT;
+    }
+}
+
+void Hardware::getTimeOverWifi()
+{
+//    wm.setDebugOutput(false);
+
+    WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP        
+    //reset settings - wipe credentials for testing
+    //wm.resetSettings();
+   // wm.setTimeout(120);
+    wm.setConfigPortalBlocking(false);
+
     
-    size_t totalBytes = 0, usedBytes = 0;
-    totalBytes = SPIFFS.totalBytes();
-    usedBytes  = SPIFFS.usedBytes();
-
-    String temp_str = "totalBytes = " + String(totalBytes) + ", usedBytes = " +  String(usedBytes);
-    println_w(temp_str);
-
-    char fname[32];
-    current_day_fname( fname, sizeof(fname), "/log", year(), month(), day() );
-    // scan_log_dir("/log");
-
-    char *modifier = "w";
-    if (SPIFFS.exists(fname) )
-        modifier = "a";
+    if (wm.autoConnect(wifi_ap_name)) {
+        sTime.updateNtpTime();
         
-    if ( !_can_write )      
-        return;
-    _file = SPIFFS.open(fname, modifier);
-    if ( !_file ) {
-        println_w("file open failed");  //  "открыть файл не удалось"
+        display.setCurrentActivity(WATCH_ACTICITY);
+        ControlState = CONTROL_AWAKE;
+        displaySleepTimer = millis();
     }
-    if ("w" == modifier)
-        _file.print("V:1\n");
-
-}
-
-char * FileSystem::current_day_fname(char *inputBuffer, int inputBuffer_size, char *dir, int16_t year, int8_t month, int8_t  day) {
-    snprintf(inputBuffer, inputBuffer_size,"%s/%04d-%02d-%02d.txt", dir, year, month, day); 
-}
-
-#define MAX_FILES_CNT 6
-void FileSystem::cat_file(File f){
-    while (f.available()) {
-        write_w(f.read());
+    else {
+        display.showWifiApMessage(onDialogFinished);
+        ControlState = CONTROL_WIFI_INIT;
     }
 }
 
-void FileSystem::list_dir(fs::FS &fs, const char * dirname){
-    File root = fs.open(dirname);
-    if(!root){
-        return;
-    }
-    if(!root.isDirectory()){
-        return;
-    }
+void Hardware::syncStatViaWifi()
+{
+    display.showSyncStatDataMessage(onDialogFinished);
 
-    File file = root.openNextFile();
-    while(file){
-        if(file.isDirectory()){
-            continue;
-        } else {
-            print_w("  FILE: ");
-            print_w(file.name());
-            print_w("\tSIZE: ");
-            println_w(file.size());
-            cat_file(file);
+    WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP        
+
+    wm.setConfigPortalBlocking(false);
+    
+    if (wm.autoConnect(wifi_ap_name)){
+        String uid   = String(cfg.getServerUid());   
+        String token = String(cfg.getServerToken()); 
+        String addr  = String(cfg.getServerAddr());
+         
+        int32_t  lastKnownData = getLastDate(addr, uid, token);
+        printf_w("lastKnownData -- %d\n", lastKnownData );
+        int32_t data_to_send[20];
+        int32_t data_to_send_len = getArrayLogfiles(lastKnownData, data_to_send, sizeof(data_to_send) );
+
+        for (int i =0; i < data_to_send_len ; i++) {
+            char pattern_url[64];
+            int32_t y, m, d;
+            int32_t date_to_send = data_to_send[i];
+
+            d = date_to_send % 100;
+            m = (date_to_send / 100)  % 100;
+            y = date_to_send / 10000;
             
+            int32_t fname_len = log_file.filenameDate(pattern_url, sizeof(pattern_url), y, m, d); 
+
+            if (fname_len > 0) {
+                sendStatFile(addr, uid, token, String(d) + "."+ String(m) +"." + String(y), String(pattern_url));
+            }
         }
-        file = root.openNextFile();
-    }
-}
-
-void FileSystem::scan_log_dir(char* dir_name) {
-    list_dir(SPIFFS, dir_name);
-}
-
-void FileSystem::save_records_to_file(){
-    if ( !_can_write )
-        return;
-
-    StatRecord_t *record = &RTC_RECORDS[0];
-    for (int i = 0; i < StatRecord_cnt; i++, record++) {
-        String temp_str = String(record->Time) + "\t" + String(record->Vcc) + String(record->Steps) + "\t" +
-                           String(record->HeartRate) + "\t" +  String(record->AmbientTempC) + "\t" +  String(record->ObjectTempC) + "\n" ;
-        println_w(temp_str);
-        _file.print(temp_str);
-    }
-}
-
-void FileSystem::write_log( StatRecord_t *record ){
   
-    memcpy( (void*) &RTC_RECORDS[StatRecord_cnt], (void*) record, sizeof(StatRecord_t) );
-    
-    if (CACHE_RECORD_CNT == (StatRecord_cnt + 1)){
-        save_records_to_file();
-        StatRecord_cnt = 0;
-    } else {
-        StatRecord_cnt++;
+        display.setCurrentActivity(WATCH_ACTICITY);
+        ControlState = CONTROL_AWAKE;
+        displaySleepTimer = millis();
+    }
+    else {
+        display.showWifiApMessage(onDialogFinished);
+
+        printf_w("Configportal running\n");
+        ControlState = CONTROL_WIFI_INIT;
     }
 }
 
-void FileSystem::close(){
-    if ( !_can_write )
-        return;
-    _file.close();
-}
-
-//============================================================================================
-// Display
-
-void Display::init() {
-//    U8G2_SSD1306_128X32_UNIVISION_F_HW_I2C _display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/ 5, /* data=*/ 4); 
-    U8G2_SH1106_128X64_NONAME_F_HW_I2C  _display1(U8G2_R0, U8X8_PIN_NONE  );
-
-    _display = _display1;
-    _display.begin();        
-    _display.setBusClock( 400000 );
-    //_display.setPowerSave(false);
-    ts_last_display_update = millis();
-}
-
-void Display::show_digitalClock(int16_t x, int16_t y) {
-    String timenow = String(hour()) + ":" + twoDigits(minute());//+":"+twoDigits(second());
-    _display.setFont(u8g2_font_freedoomr25_tn);//(ArialMT_Plain_24);
-    _display.drawStr( x, y , timenow.c_str() );
-}
-
-void Display::show_temperatureC(int16_t x, int16_t y, float therm, float pulse) {
-    String temp_str1 =  String (therm) + "*C ";
-    String temp_str2 =  String (pulse) + "bpm";
-
-    _display.setFont(u8g2_font_helvR08_te);
-    _display.drawStr(x, 14, temp_str1.c_str());
-    _display.drawStr(x, 32, temp_str2.c_str());
-}
-
-void Display::show_steps(int16_t x, int16_t y, uint16_t steps) {
-    String steps_str = "steps: " + String (steps) ;
-
-    _display.setFont(u8g2_font_helvR08_te);
-    _display.drawUTF8(x, y, steps_str.c_str());
-}
-
-void Display::update(float therm, float pulse, uint16_t steps){
-   // if (millis() - ts_last_display_update <= REPORTING_PERIOD_MS) 
-   //     return;
-//    print_stat();
-
-    ts_last_display_update = millis();
-
-    _display.clearBuffer();         // clear the internal memory
-    show_digitalClock( 0, 32);
-    show_temperatureC( 90, 32, therm, pulse);
-    show_steps(0, 50, steps);
-    
-    _display.sendBuffer();          // transfer internal memory to the display
-}
-
-void Display::setPowerSave(bool powerSave){
-    _display.setPowerSave(powerSave);
-}
-
-
+//----
 //============================================================================================
 // Control
 
-void Control::init(){
+void Control::init()
+{
     pinMode(LEFT_BUTTON,INPUT);
     pinMode(RIGHT_BUTTON,INPUT);
     pinMode(OK_BUTTON,INPUT);
@@ -484,15 +691,17 @@ void Control::init(){
 */
 }
 
-void  Control::print_button_state (const char *func_name, uint32_t line_number, int l_State, int r_State, int o_State ) {
-    print_w("print_button_state --  ");
+void  Control::printButtonState(const char *func_name, uint32_t line_number, int l_State, int r_State, int o_State) 
+{
+    print_w("printButtonState --  ");
     print_w( func_name );       print_w(":");    print_w( line_number );     print_w("\t");
     print_w(LEFT_BUTTON);   print_w(" - ");print_w(l_State);     print_w(", ");    
     print_w(RIGHT_BUTTON);  print_w(" - ");print_w(r_State);     print_w(", ");     
     print_w(OK_BUTTON);     print_w(" - ");print_w(o_State);     println_w("");  
 }
 
-bool Control::button_pressed(){
+bool Control::buttonPressed()
+{
     pinMode(LEFT_BUTTON,INPUT);
     pinMode(RIGHT_BUTTON,INPUT);
     pinMode(OK_BUTTON,INPUT);
@@ -507,22 +716,21 @@ bool Control::button_pressed(){
         _Button_State |= 1ULL << RIGHT_BUTTON;
     if (o_State)
         _Button_State |= 1ULL << OK_BUTTON;
-        
-    if ( _Button_State != _Button_PrevState){
+
+    if (_Button_State != _Button_PrevState) {
         _Button_PrevState = _Button_State;
-        if (  !(_Button_State & (1ULL << LEFT_BUTTON) ) ||
-              !(_Button_State & (1ULL << RIGHT_BUTTON) ) || 
-              !(_Button_State & (1ULL << OK_BUTTON)) ) {
-          return true;
+        if (!(_Button_State & (1ULL << LEFT_BUTTON)) ||
+              !(_Button_State & (1ULL << RIGHT_BUTTON)) || 
+              !(_Button_State & (1ULL << OK_BUTTON))) {
+            return true;
         }
     }
     return false;
 }
 
-
-void Control::init_wakeup(){
+void Control::initWakeup()
+{
      esp_sleep_enable_ext0_wakeup(LEFT_BUTTON, 0);
-
 /*
     const uint64_t ext_wakeup_pin_1_mask = 1ULL << LEFT_BUTTON;
     const uint64_t ext_wakeup_pin_2_mask = 1ULL << RIGHT_BUTTON;
@@ -531,5 +739,178 @@ void Control::init_wakeup(){
 
     esp_sleep_enable_ext1_wakeup(ext_wakeup_pin_mask, ESP_EXT1_WAKEUP_ANY_HIGH);
 */
+}
 
+
+//============================================================================================
+// Config
+void Config::init() 
+{
+    load();
+    setToMenu();
+}
+
+void Config::load() 
+{
+    File file = SPIFFS.open(filename);
+    printf_w("%s, size %d\n", filename, file.size());
+/*
+    while (file.available()) {
+        write_w(file.read());
+    }
+    printf_w("\n");
+*/
+    // Allocate a temporary JsonDocument
+    // Don't forget to change the capacity to match your requirements.
+    // Use arduinojson.org/v6/assistant to compute the capacity.
+    StaticJsonDocument<512> doc;
+
+    DeserializationError error = deserializeJson(doc, file);
+    if (error) {
+        printf_w("Failed to read file, using default configuration. %p", file);
+        temp_sensor_switch = true;
+        step_sensor_switch = true;
+        timezone           = 6;
+        auto_update_time_over_wifi   = false;
+        file.close();
+        return;
+    }
+    // Copy values from the JsonDocument to the Config
+    temp_sensor_switch = doc["temp_switch"];
+    step_sensor_switch = doc["step_switch"];
+    timezone           = doc["timezone"];
+    auto_update_time_over_wifi = doc["auto_update_time"];
+    strcpy(server_uid,   doc["server_uid"]);
+    strcpy(server_token, doc["server_token"]);
+    
+    if ( doc["server_addr"]) 
+        strcpy(server_addr, doc["server_addr"]);
+
+    file.close();
+
+    printf_w("Config load: server_uid %s, server_token %s\n", server_uid, server_token);
+    serializeJson(doc, Serial); // {"hello":"world"}
+    printf_w("\n");
+
+    updateUlpConfig();
+}
+
+void Config::updateUlpConfig() 
+{
+    uint16_t switch_extern = 0;
+    if (temp_sensor_switch) {
+        switch_extern |= SENSOR_INA219;
+    }
+    if (step_sensor_switch) {
+        switch_extern |= SENSOR_INA219;
+    }
+
+    if (ulp_sensors_switch_extern != switch_extern) {
+        ulp_sensors_switch_extern = switch_extern; 
+    }
+}
+
+void Config::save() 
+{
+  // Delete existing file, otherwise the configuration is appended to the file
+    printf_w("Config save, need_save - '%s'\n", need_save? "y" : "n" );
+    if (!need_save)
+        return;
+        
+    printf_w("Config save: '%s'\n", filename);
+    SPIFFS.remove(filename);
+    printf_w("Config save: remove '%s'\n", filename);
+
+    File file = SPIFFS.open(filename, "w");
+    if (!file) {
+        print_w("Failed to create file");
+        return;
+    }
+    printf_w("Config save: open ok '%s'\n", filename);
+
+    StaticJsonDocument<512> doc;
+    printf_w("Config save: StaticJsonDocument init ok '%s', temp_switch '%s', step_switch '%s', timezone '%d', auto_update_time '%s', uid %s, token %s\n", 
+              filename, 
+              temp_sensor_switch? "y":"n", step_sensor_switch?"y":"n", timezone,  auto_update_time_over_wifi?"y":"n",
+              server_uid, server_token
+              );
+
+    doc["temp_switch"] = temp_sensor_switch;
+    doc["step_switch"] = step_sensor_switch;
+    doc["timezone"]    = timezone;
+    doc["auto_update_time"] = auto_update_time_over_wifi;
+    doc["server_uid"]   = server_uid;
+    doc["server_token"] = server_token;
+    doc["server_addr"] = server_addr;
+
+    printf_w("Config save: set value ok '%s'\n", filename);
+
+    if (serializeJson(doc, file) == 0) {
+        print_w("Failed to write to file");
+    }
+    printf_w("Config save: start close '%s'\n", filename);
+
+    serializeJson(doc, Serial); // {"hello":"world"}
+    
+    file.close();
+}
+
+
+// set data to external values, uuuuglyyyy 
+void Config::setToMenu() 
+{
+// menuPulseMeter.setBoolean(newValue, true);
+    menuPedoMeter.setBoolean(step_sensor_switch, true);
+    menuTemperature.setBoolean(temp_sensor_switch, true);
+    menuTimeZone.setCurrentValue(timezone, true); 
+    //menuAutoUpdate.setBoolean(auto_update_time_over_wifi, true);
+}
+
+
+void Config::setCurrenDayTimeToMenu() 
+{
+    DateStorage _date(  day(), month(),  year() );
+    TimeStorage _time( hour(), minute(), second(), 0);
+    
+    menuTime.setTime(_time);
+    menuDate.setDate(_date);
+}
+
+void Config::cast_from_menu() 
+{
+// menuPulseMeter.setBoolean(newValue, true);
+    step_sensor_switch         = menuPedoMeter.getBoolean();
+    temp_sensor_switch         = menuTemperature.getBoolean();
+    timezone                   = menuTimeZone.getCurrentValue(); 
+  //  auto_update_time_over_wifi = menuAutoUpdate.getBoolean();
+}
+
+void Config::setServerUid(const char *_uid)
+{ 
+    strcpy(server_uid, _uid);
+}
+
+void Config::setServerToken(const char *_token)
+{
+    strcpy(server_token, _token);
+}
+
+void Config::setServerAddr(const char *_addr)
+{
+    strcpy(server_addr, _addr);
+}
+
+char * Config::getServerUid()
+{
+    return server_uid;
+}
+
+char * Config::getServerToken()
+{
+    return server_token;
+}
+
+char * Config::getServerAddr()
+{
+    return server_addr;
 }

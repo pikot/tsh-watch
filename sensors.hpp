@@ -8,105 +8,80 @@
 //define _USE_BMI160_ 1
 
 #include "utils.h"
-#include "MAX30100_PulseOximeter.h"
-#include <Adafruit_INA219.h>
+#include <TimeLib.h>
+#include <WiFiUdp.h>
+#include <WiFi.h>
 
-#ifdef _USE_LSM6DS3_
-#include <SparkFunLSM6DS3.h>
-#endif
-#ifdef _USE_BMI160_
-#include <BMI160Gen.h>
-#endif
-
-#if defined(_USE_MLX90614_)
-#include <SparkFunMLX90614.h>
-#endif
-#if defined(_USE_MLX90615_)
-#include <MLX90615.h>
-#endif
+#include "battery.h"
 
 class Sensor {
     private:
         int i2c_addr;
-    public:
-        bool inited = false;
 
+       // virtual void read_data_direct();
+
+    protected:
+        bool inited  = false;
+        virtual void init_direct();
+
+    public:
         void init();
-        void init(bool is_after_deepsleep);
         
-        void update();
         void sleep();
         void wake();
+
+        void on();
+        void off();
         
-        void read_data();
+        void read();
+        
 };
 
-#ifdef _USE_BMI160_
-class GyroscopeBMI160 : public Sensor {
-    private:
-        const int      i2c_addr = 0x69;
-        BMI160GenClass gyro;
-        
-        int32_t  steps;
-    public:
-        GyroscopeBMI160();
-        void init(bool clearStep);
-        void update();
-        void sleep();
-        void wake();
-        
-        void read_data();
-        uint16_t StepCount();
-};
-typedef  GyroscopeBMI160 Gyroscope;
-#endif
 
-#ifdef _USE_LSM6DS3_
 class GyroscopeLSM6DS3 : public Sensor {
     private:
         const int      i2c_addr = 0x6A;
-        LSM6DS3Core  *gyro;
         
         int32_t  steps;
+
+        void printUlpData();
+
     public:
         GyroscopeLSM6DS3();
         ~GyroscopeLSM6DS3();
-        void init(bool clearStep);
-        void update();
+        void init();
         void sleep();
         void wake();
         
-        void read_data();
-        uint16_t StepCount();
+        void read();
+        uint16_t getStepCount();
 };
 typedef  GyroscopeLSM6DS3 Gyroscope;
-#endif
+
 
 class ThermoMeter: public Sensor {
     private:
-#if defined(_USE_MLX90614_)
-        IRTherm         therm;
-#elif defined(_USE_MLX90615_)
-        MLX90615        therm;
-#endif
         float AmbientTempC;
         float ObjectTempC;
         
+ 
+        float raw_temp_to_C(uint16_t _t);
+        void printUlpData();
+   
     public:
         ThermoMeter();
         void init();
-        void update();
         void sleep();
         void wake();
 
-        void read_data();
-        float AmbientC();  
-        float ObjectC();
+        void read();
+        float getAmbientC();  
+        float getObjectC();
 };
 
 class PulseMeter: public Sensor {
     private:
-        PulseOximeter   pulse;
+//        PulseOximeter   pulse;
         
         float    heartRate;
         float    spO2;
@@ -115,35 +90,90 @@ class PulseMeter: public Sensor {
         PulseMeter();
         
         void init();
-        void update();
         void sleep();
         void wake();
 
-        void read_data();
-        float HeartRate();
-        float SpO2();
+        void read();
+        float getHeartRate();
+        float getSpO2();
 };
 
+/*
 #define BATTERY_ADC_CH  ADC1_CHANNEL_4  // GPIO 32
 #define BATTERY_ADC_SAMPLE  33
 #define BATTERY_ADC_DIV  1
 #define ADC_VREF        1128            // ADC calibration data
-
+*/
 class CurrentMeter: public Sensor {
     private:
-        Adafruit_INA219 ina219;
+        Battery         *battery;
+        float   vcc;
+        float   current;
+        uint8_t batLevel;
         
-        float vcc;
-        
+        float current_since_reboot;
+        float *aggr_current;
+        float aggr_current_prev;
+
+        int32_t tm = 1;
+        int32_t tb = 60;
+       // prew_aggr_current;
+
+        float calc_aggr_accum(float mA);
+        void printUlpData();
     public:
         CurrentMeter();
-        void init();
+        void init(float *current);
         void sleep();
         void wake();
-        uint32_t get_battery_voltage(void);
+    //    uint32_t get_battery_voltage(void);
         
-        void read_data();
-        float Vcc();
+        void read();
+        float getVcc();
+    //    float getCurrent();
+        uint8_t getBatLevel();
+};
+
+const int NTP_PACKET_SIZE = 48; // NTP time is in the first 48 bytes of message
+
+class TimeMeter: public Sensor {
+    private:        
+        uint8_t bcd2dec(uint8_t bcd);
+        uint8_t dec2bcd(uint8_t n);
+
+        void printUlpData();
+        
+        WiFiUDP Udp;
+        char *ntpServerName    = "europe.pool.ntp.org";
+        uint32_t localPort = 8888;  // local port to listen for UDP packets
+
+        byte packetBuffer[NTP_PACKET_SIZE]; //buffer to hold incoming & outgoing packets
+
+        uint32_t  ntpUpdateInterval = 3600;
+        int timeZone          = 3;     // Moscow  Time
+
+        void   updateUlpTime(tmElements_t &tm);
+        void   sendNtpPacket(IPAddress &address); 
+        time_t getNtpTime();
+        bool   read_data_to_tm(tmElements_t &tm) ;
+    public:
+        TimeMeter();
+        
+        void init();
+        void read();
+
+        void sleep();
+        void wake();
+
+        time_t currentTime();
+
+        time_t updateNtpTime();
+
+        void updateTime(int h,  int m, int s);
+        void updateDate(int d,  int m, int y);
+        void setTimeZone(int8_t tz) { timeZone = tz; }
+
+ //       DS3231M_Class dateNow() {return DS3231M;}
 };
 
 #endif

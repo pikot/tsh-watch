@@ -6,9 +6,9 @@ ARDUINO_LIB_DIR=~/Documents/Arduino/libraries/
 #ARDUINO_LIB_DIR=~/Documents/tmp_test/
 
 declare -a arr=(
-    "git@github.com:pikot/MLX90615.git"
-    "git@github.com:pikot/EmotiBit_BMI160.git"
-    "git@github.com:Seeed-Studio/Accelerometer_And_Gyroscope_LSM6DS3.git"
+    "git@github.com:pikot/Arduino-MAX30100.git"
+    "git@github.com:arduino-libraries/NTPClient.git"
+    "git@github.com:pikot/WiFiManager.git"
     )
 
 function create_dir_ifnotexist {
