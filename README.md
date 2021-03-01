@@ -1,6 +1,6 @@
 # tsh-watch
 
-This is software for watches on esp32. Ulp version.
+This is software for watches on esp32. Ulp version. 
 
 ![front view](http://vesovoy-control.ru/tsh_watch_foto/tsh_watch_front.png)
 
@@ -8,7 +8,7 @@ Main feature (concept)
 
 It 
 - Shows date and time
-- Counts steps, pulse
+- Counts steps, temperature
 - Collects data for 10 days on mcu flash and shows nice graphs
 - Works ~3 days without charging (battery 130mAh)
 - send data via wifi to server
@@ -23,7 +23,7 @@ Current state.
 - MCU: ESP32 (collects data by ulp)
 - Display: 1.3" SH1106 
 - Pulsemeter: MAX30100 (switch off now, because data doesen't fit slow RTC memory)
-- Pedometer:  LSM6DS3TR
+- Pedometer:  LSM6DS3C
 - Temperature sensor: MLX90615
 - Current consumption sensor: INA219
 
@@ -32,14 +32,19 @@ In long perspective i'm going to change
 - perometer to BMA423 (it detects different types of activity and hand tilt movement),  
 and add
 - humidity sensor and barometer bme289
-- GPS L80-R or GP-1/2 (if can find proper place on pcb for antenn)
-
+- GPS L80-R or GP-1/2 (if can find proper place on pcb for antenna)
 
 Current consumption of watches now ~2mAh
 
 this is vcc graph for 130mAh battary
 
 ![vcc graph](http://vesovoy-control.ru/tsh_watch_foto/VCC.png)
+
+Schema
+
+Not ready, but can be build based on sources (main idea 2 different i2c buses for ulp and for screen, buttons on write only pins)
+
+Youtoube presentation -- https://youtu.be/CB8Ftyo_vDs (russian, with english subs)
 
 Development process and plains
 
