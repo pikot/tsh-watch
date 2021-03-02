@@ -4,11 +4,11 @@ This is software for watches on esp32. Ulp version.
 
 ![front view](http://vesovoy-control.ru/tsh_watch_foto/tsh_watch_front.png)
 
-Main feature (concept)
+Main feature 
 
 It 
 - Shows date and time
-- Counts steps, temperature
+- Counts steps, measure body temperature
 - Collects data for 10 days on mcu flash and shows nice graphs
 - Works ~3 days without charging (battery 130mAh)
 - send data via wifi to server
@@ -43,6 +43,8 @@ this is vcc graph for 130mAh battary
 Schema
 
 Not ready, but can be build based on sources (main idea 2 different i2c buses for ulp and for screen, buttons on write only pins)
+
+
 
 Youtoube presentation -- https://youtu.be/CB8Ftyo_vDs (russian, with english subs)
 
