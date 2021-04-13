@@ -45,9 +45,10 @@ Schema
 Not ready, but can be build based on sources (main idea 2 different i2c buses for ulp and for screen, buttons on write only pins)
 
 
+Links:
 
-Youtoube presentation -- https://youtu.be/CB8Ftyo_vDs (russian, with english subs)
+Youtube presentation -- https://youtu.be/CB8Ftyo_vDs (russian, with english subs)
 
-Development process and plains
+All fresh info and photo about development in instagram -- https://www.instagram.com/tshideas/
 
-https://github.com/pikot/tsh-watch/projects/1
+Development process and plains -- https://github.com/pikot/tsh-watch/projects/1
