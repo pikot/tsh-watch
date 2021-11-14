@@ -1,6 +1,9 @@
-//============================================================================================
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 // Display
 #include "display.hpp"
+#include <float.h>
 
 String twoDigits(int digits) 
 {
@@ -17,51 +20,102 @@ unsigned char batteryPicArray [] PROGMEM =  {
  0x49,0x92,0x01,0xe0,0xff,0x3f
 };
 
+//#define image_width  13
+//#define image_height 16
+unsigned char footprintsPicArray[] PROGMEM = {
+ 0x00,0xe0,0x30,0xe0,0x3c,0xe0,0x16,0xe0,0xba,0xe1,0xbd,0xe7,
+ 0x1e,0xed,0x9e,0xeb,0x8e,0xf7,0x1c,0xef,0x1c,0xee,0x38,0xef,
+ 0x38,0xe7,0x80,0xe3,0xc0,0xe3,0xc0,0xe1
+};
+
+unsigned char pressurePicArray[] = {
+ 0x04,0xe4,0x04,0xe4,0x04,0xe4,0x04,0xe4,0x04,0xe4,0x04,0xe4,
+ 0x04,0xe4,0x04,0xe4,0x15,0xf5,0x0e,0xee,0x04,0xe4,0x00,0xe0,
+ 0x38,0xf8,0x6c,0xec,0xc6,0xe6,0x83,0xe3};
+ 
+unsigned char temperaturePicArray[] = {
+ 0x38,0xf3,0x74,0xf3,0xd4,0xf7,0x74,0xf3,0x54,0xf3,0x74,0xfb,
+ 0x54,0xff,0xba,0xf6,0x7d,0xf1,0x7d,0xf1,0x7d,0xf1,0xbb,0xf1,
+ 0xc6,0xf0,0x7c,0xf0};
+
+
+
 void Display::init() 
 {
+
    // U8G2_SSD1306_128X64_NONAME_F_HW_I2C _display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/  22, /* data=*/ 21); 
     U8G2_SH1106_128X64_NONAME_F_HW_I2C  _display1(U8G2_R0, U8X8_PIN_NONE, /* clock=*/ 22, /* data=*/ 21 );
-
     _display = _display1;
-    _display.begin(/*Select=*/ GPIO_NUM_27, /*Right/Next=*/ GPIO_NUM_33, /*Left/Prev=*/ GPIO_NUM_14, /*Up=*/ U8X8_PIN_NONE, /*Down=*/ U8X8_PIN_NONE, /*Home/Cancel=*/ U8X8_PIN_NONE); 
     _display.setBusClock(400000);
+    print_w("Display::init -- before begin  \n"); // test to see slow  init
+    _display.begin(); 
+    print_w("Display::init -- after begin  \n"); // test to see sloe init end
 
    // _display.setPowerSave(true);// kkkkkkK oatoff after test
     tsLastDisplayUpdate = millis();
     currentActivity = WATCH_ACTICITY;
+
     bitmapInitialize();
 
    // main_menu.init(_display);
     setupMenu(&_display);
+
 }
 
 void Display::bitmapInitialize(){
     batteryPic.set(batteryPicArray,16, 9);
+    footprintsPic.set(footprintsPicArray,13, 16);
+    pressurePic.set(pressurePicArray, 13, 16);
+    temperaturePic.set(temperaturePicArray, 12, 14);
 }
 
 void Display::showDigitalClock(int16_t x, int16_t y) 
 {
     String timenow = String(hour()) + ":" + twoDigits(minute());//+":"+twoDigits(second());
-    _display.setFont(u8g2_font_freedoomr25_tn);//(ArialMT_Plain_24);
+    _display.setFont(u8g2_font_logisoso20_tn);//(ArialMT_Plain_24);
     _display.drawStr(x, y , timenow.c_str());
 }
 
+const char * weekDays[] = { "", "Sun", "Mon", "Tue", "Wed",
+                                "Thu", "Fri", "Sat",
+                              };
+                              
+void Display::showDate(int16_t x, int16_t y) {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%02d/%02d %s", month(), day(), weekDays[weekday()] );  
+   
+    _display.setFont(u8g2_font_profont10_tr);
+    _display.drawStr(x , y, buf);
+}
 void Display::showTemperatureC(int16_t x, int16_t y, float therm, float pulse) 
 {
-    String temp_str1 =  String(therm) + "*C ";
-    String temp_str2 =  String(pulse) + "bpm";
+  
+    _display.drawXBMP(x, y - 11, temperaturePic.width, temperaturePic.height, temperaturePic.pic);
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%.1f\xB0""C", therm );  
+    
+    _display.setFont(u8g2_font_courR08_tf);
+    _display.drawStr(x + 16, y, buf);
+}
 
-    _display.setFont(u8g2_font_helvR08_te);
-    _display.drawStr(x, 62, temp_str1.c_str());
-  //  _display.drawStr(x, 32, temp_str2.c_str());
+void Display::showPressure(int16_t x, int16_t y, float pressure) 
+{
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%.0f", pressure );  
+    _display.drawXBMP(x, y - 12, pressurePic.width, pressurePic.height, pressurePic.pic);
+
+    _display.setFont(u8g2_font_courR08_tf);
+    _display.drawStr(x + 16, y, buf);
 }
 
 void Display::showSteps(int16_t x, int16_t y, uint16_t steps) 
 {
-    String steps_str = "steps: " + String (steps) ;
+    _display.drawXBMP(x, y - 12, footprintsPic.width, footprintsPic.height, footprintsPic.pic);
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%d", steps );
 
-    _display.setFont(u8g2_font_helvR08_te);
-    _display.drawUTF8(x, y, steps_str.c_str());
+    _display.setFont(u8g2_font_courR08_tf);
+    _display.drawUTF8(x + 16, y, buf);
 }
 
 void Display::showBatteryLevel(uint8_t batLevel){
@@ -69,21 +123,63 @@ void Display::showBatteryLevel(uint8_t batLevel){
   //  int color = light_up? SSD1306_WHITE : SSD1306_BLACK;
   //  _display.setDrawColor(color);
 
-    _display.drawXBMP(105, 0, batteryPic.width, batteryPic.height, batteryPic.pic);
+    _display.drawXBMP(112, 0, batteryPic.width, batteryPic.height, batteryPic.pic);
     uint32_t _size = 14;
     int w = (batLevel * _size) / 100;
-    _display.drawBox(106, 2, w, 5);
+    _display.drawBox(113, 2, w, 5);
     
-     printf_w("-showBatteryLevel- %d %, %d\n", batLevel, w);
+   //  printf_w("-showBatteryLevel- %d %, %d\n", batLevel, w);
 
   //  oled.display_rect(107,2,last_battery_volt_level,5,lightup);
 }
 
-void Display::showWatchActivity(float therm, float pulse, uint16_t steps, uint8_t batLevel) 
+
+void Display::showGraph(int16_t x, int16_t y) 
+{    
+    uint32_t w =  63, h = 36;
+    float buf[CACHE_DISPLAY_CNT];
+    uint8_t bufSize = getDisplayStat(buf, CACHE_DISPLAY_CNT);
+    
+    printf_w("DDDDDDDDDDDDDDDDDDisplay::showGraph -- bufSize %d \n", bufSize); // test to see sloe init end
+    if (bufSize <= 0)
+        return;
+  //  _display.drawFrame(x, y, w, h);
+    _display.drawLine(x, y+h, x+w, y+h);
+
+
+    float maxV = 0, minV = FLT_MAX;
+    for (int32_t i = 0; i < bufSize; i++) {
+          printf_w("Display::showGraph buf[i] %f,  maxV %f\n",  buf[i],  maxV );
+          maxV = max(maxV, buf[i]);
+          minV = min (minV, buf[i]);
+    }
+    if (maxV <= 0) {
+          return;
+    }
+    float maxLen = maxV - minV;
+    float graphEndY = y + h;
+    float  _pos_x = x + 3, _step = w / bufSize;
+    for (int32_t i = 0; i < bufSize; i++) {
+           float lenLine = ( (buf[i] - minV )* h) / maxLen;
+           float _pos_y_start  = (graphEndY - lenLine);
+           float _pos_y_end = graphEndY;
+           printf_w("Display::showGraph -- i %d, lenLine %f, _pos_y_start %f, _pos_y_end %f, _pos_x %f \n", i, lenLine, _pos_y_start, _pos_y_end, _pos_x ); // test to see sloe init end
+
+           _display.drawLine(_pos_x, _pos_y_start, _pos_x, _pos_y_end);
+           _pos_x += _step;
+    }
+    
+}
+
+void Display::showWatchActivity(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel) 
 {
-    showDigitalClock(0, 32);
-    showTemperatureC(90, 64, therm, pulse);
-    showSteps(0, 64, steps);
+    showDigitalClock(0, 21);
+    showDate(64, 6);
+    showTemperatureC(0, 45, therm, pulse);
+    showSteps(0, 60, steps);
+    showPressure(75, 60, pressure);
+    showGraph(65, 11);
+    
     showBatteryLevel(batLevel);
 }
 
@@ -205,7 +301,7 @@ void Display::setCurrentActivity(displayActivity_t activity)
 //     printf_w("---  setCurrentActivity %d\n", activity);
 }
 
-void Display::update(float therm, float pulse, uint16_t steps, uint8_t batLevel, Graph *graph)
+void Display::update(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel, Graph *graph)
 {
    // if (millis() - tsLastDisplayUpdate <= REPORTING_PERIOD_MS) 
    //     return;
@@ -214,7 +310,7 @@ void Display::update(float therm, float pulse, uint16_t steps, uint8_t batLevel,
     
     if (WATCH_ACTICITY == currentActivity) {
         _display.clearBuffer();         // clear the internal memory
-        showWatchActivity( therm,  pulse,  steps, batLevel);
+        showWatchActivity( therm,  pulse,  steps, pressure, batLevel);
         _display.sendBuffer();          // transfer internal memory to the display
     }
     else
@@ -271,7 +367,7 @@ void  Graph::setDate(int _day, int _month, int _year, int _weekday)
     tme.Year  = (uint8_t) _year - 1970 ; // offset from 1970; 
   
     currentDate = makeTime(tme);
-    
+
     printf_w("---  setDate %d, _day %d,  _month %d,  _year %d  \n", currentDate,   _day,  _month,  _year);
 }
 

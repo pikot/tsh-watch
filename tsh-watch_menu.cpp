@@ -12,6 +12,7 @@
 #include <tcMenu.h>
 #include "tsh-watch_menu.h"
 #include "utils.h"
+#include "control.hpp"
 
 // Global variable declarations
 
@@ -21,10 +22,12 @@ U8g2GfxMenuConfig   gfxConfig;
 U8g2MenuRenderer    renderer;
 
 // Global Menu Item declarations
+const BooleanMenuInfo PROGMEM minfoBaroMeter = { "BaroeMeter", 15, 0xFFFF, 1, onBaroMeterCh, NAMING_ON_OFF };
+BooleanMenuItem               menuBaroMeter(&minfoBaroMeter, false, NULL);
 
 
-const BooleanMenuInfo PROGMEM minfoPulseMeter = { "PulseMeter", 13, 0xFFFF, 1, NO_CALLBACK, NAMING_ON_OFF };
-BooleanMenuItem               menuPulseMeter(&minfoPulseMeter, false, NULL);
+const BooleanMenuInfo PROGMEM minfoPulseMeter = { "PulseMeter", 13, 0xFFFF, 1, onPulseMeterCh, NAMING_ON_OFF };
+BooleanMenuItem               menuPulseMeter(&minfoPulseMeter, false, &menuBaroMeter);
 
 const BooleanMenuInfo PROGMEM minfoPedoMeter = { "PedoMeter", 12, 0xFFFF, 1, onPedoMeterCh, NAMING_ON_OFF };
 BooleanMenuItem               menuPedoMeter(&minfoPedoMeter, false, &menuPulseMeter);
@@ -114,7 +117,7 @@ ActionMenuItem menuGraphTemp(&minfoGraphTemp,  &menuSyncStatViaWiFi);
 const AnyMenuInfo PROGMEM minfoGraphSteps = { "Graph Steps", 1, 0xFFFF, 0, onGraphStepsPressed };
 ActionMenuItem menuGraphSteps(&minfoGraphSteps, &menuGraphTemp);
 
-const AnyMenuInfo     PROGMEM minfoClose = { "Close", 14, 0xFFFF, 0, onBack };
+const AnyMenuInfo     PROGMEM minfoClose = { "Close", 20, 0xFFFF, 0, onBack };
 ActionMenuItem                menuClose(&minfoClose, &menuGraphSteps);
 
 
@@ -124,7 +127,7 @@ void myDisplayFunction(unsigned int encoderValue, RenderPressMode clicked) {
 
 // Set up code
 void setupMenu( U8G2 *_gfx ) {
-    menuPulseMeter.setReadOnly(true);
+  //  menuPulseMeter.setReadOnly(true);
     
     prepareBasicU8x8Config(gfxConfig);
     renderer.setGraphicsDevice(_gfx, &gfxConfig);
@@ -136,7 +139,9 @@ void setupMenu( U8G2 *_gfx ) {
 */
     
     switches.initialise(internalDigitalIo(), true);
-    menuMgr.initForUpDownOk(&renderer, &menuClose, 33, 14, 27);
+
+
+    menuMgr.initForUpDownOk(&renderer, &menuClose, CONTROL_RIGHT_BUTTON, CONTROL_LEFT_BUTTON, CONTROL_OK_BUTTON);
 }
 
 

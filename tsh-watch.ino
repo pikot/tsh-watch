@@ -1,4 +1,7 @@
- #include "hardware.hpp"
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov
+//  SPDX-License-Identifier: GPL-3.0-or-later
+ 
+#include "hardware.hpp"
 
 Hardware watch;
 
@@ -52,12 +55,23 @@ void CALLBACK_FUNCTION onTemperatureCh(int id)
     watch.setTempSwitch(val, true);
 }
 
+void CALLBACK_FUNCTION onPulseMeterCh(int id) 
+{
+    bool val = menuPulseMeter.getBoolean();
+    watch.setPulseSwitch(val, true);
+}
+
+void CALLBACK_FUNCTION onBaroMeterCh(int id) 
+{
+    bool val = menuBaroMeter.getBoolean();
+    watch.setBaroSwitch(val, true);
+}
+
 void CALLBACK_FUNCTION onPedoMeterCh(int id) 
 {
     bool val = menuPedoMeter.getBoolean();
     watch.setPedoSwitch(val, true);
 }
-
 void CALLBACK_FUNCTION onSetupWiFi(int id) 
 {
     printf_w("Start Wifi portal\n");
@@ -91,7 +105,7 @@ void CALLBACK_FUNCTION onGraphTempPressed(int id)
     showWindow(tempCallbackFn);
 }
 
-//!!! Если открыть график после открытия другого, вначале показывается прошлый, и только после пересчета новый
+//!!! Если открыть график после открытия другого, вначале показывается прошлый, и только после пересчета новый (need fix)
 
 void stepsCallbackFn(unsigned int currentValue, RenderPressMode userClicked)  
 {
@@ -107,6 +121,7 @@ void CALLBACK_FUNCTION onGraphStepsPressed(int id)
 void CALLBACK_FUNCTION onSyncStatViaWiFi(int id) 
 {
     watch.syncStatViaWifi();
+    watch.syncStatHrViaWifi();
 }
 
 void saveWifiConfigCallback () 

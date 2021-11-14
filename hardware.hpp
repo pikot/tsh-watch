@@ -1,8 +1,11 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef _HARDWARE_
 #define _HARDWARE_
-
 #include "sensors.hpp"
 #include <TimeLib.h>
+//#include <SoftWire.h>
 
 //#include "icon_menu.h"
 #include <ArduinoJson.h>
@@ -14,6 +17,8 @@
 
 #include "display.hpp"
 #include "ulp_main.h"
+
+#include "control.hpp"
 
 enum sensor_state_t{
     SENSOR_GOTOSLEEP = 0,
@@ -45,15 +50,17 @@ static const char * espSleepWake[] = {
 };
 
 #define  IS_GRAPH_ACTIVITY(act)  ( GRAPH_BODY_TEMP_ACTIVITY == act || GRAPH_STEPS_ACTIVITY == act ) 
+#define  GPIO_BY_NUM2(X) GPIO_NUM_ ## X
+#define  GPIO_BY_NUM(X)  GPIO_BY_NUM2(X)
 
 class Control {
     private:        
         uint64_t _Button_State      = 0;
         uint64_t _Button_PrevState  = 0;
-        gpio_num_t LEFT_BUTTON          = GPIO_NUM_14;
-        gpio_num_t RIGHT_BUTTON         = GPIO_NUM_33; // in schema 33 return after test
-        gpio_num_t OK_BUTTON            = GPIO_NUM_27;       
 
+        gpio_num_t LEFT_BUTTON          = GPIO_BY_NUM( CONTROL_LEFT_BUTTON );
+        gpio_num_t RIGHT_BUTTON         = GPIO_BY_NUM( CONTROL_RIGHT_BUTTON );
+        gpio_num_t OK_BUTTON            = GPIO_BY_NUM( CONTROL_OK_BUTTON );     
 
         void printButtonState (const char *func_name, uint32_t line_number, int l_State, int r_State, int o_State );
     public:
@@ -77,6 +84,9 @@ class Config {
     private:
          bool temp_sensor_switch;
          bool step_sensor_switch;
+         bool pulse_sensor_switch;
+         bool baro_sensor_switch;
+
          int8_t timezone;
          bool auto_update_time_over_wifi;
          
@@ -88,6 +98,8 @@ class Config {
          char *filename = "/config.txt";
          bool need_save = false;
          void updateUlpConfig();
+         void initDefaultValues();
+
     public:
         void init();
         void load();
@@ -102,6 +114,11 @@ class Config {
 
         void setTempSensorSwitch(bool val) {  temp_sensor_switch = val;}
         void setStepSensorSwitch(bool val) {  step_sensor_switch = val;}
+        void setPulseSensorSwitch(bool val) { pulse_sensor_switch = val;}
+        void setBaroSensorSwitch(bool val) { baro_sensor_switch = val;}
+
+
+        
         void setServerUid(const char* u) ;
         void setServerToken(const char * t);
         void setServerAddr(const char * a);
@@ -109,6 +126,9 @@ class Config {
 
         bool getTempSensorSwitch(){ return temp_sensor_switch;}
         bool getStepSensorSwitch(){ return step_sensor_switch;}
+        bool getPulseSensorSwitch(){ return pulse_sensor_switch;}
+        bool getBaroSensorSwitch(){ return baro_sensor_switch;}
+
         char *getServerUid();
         char *getServerToken();
         char *getServerAddr();
@@ -117,9 +137,19 @@ class Config {
 
 void saveWifiConfigCallback();
 
+#define HR_LOG_MAX_SIZE 512000
+//#define HR_LOG_MAX_SIZE 256000
+//#define HR_LOG_SYNC_STEP 21600  // 6 hours
+#define HR_LOG_SYNC_STEP 86200  //24 hours
+
 class Hardware {
     private:
         bool            use_wifi = false;
+
+        uint8_t         ulpSdaPin = GPIO_SDA ;
+        uint8_t         ulpSclPin =  GPIO_SCL;
+        
+        SoftWire       *ulpI2c;// (sdaPin, sclPin);
 
         //int32_t         wifi_stage;
         Config          cfg;
@@ -128,11 +158,16 @@ class Hardware {
         ThermoMeter     sTerm;
         PulseMeter      sPulse;
         CurrentMeter    sCurrent;
+        BME280Meter     sBME280;
 
         TimeMeter       sTime;
         Display         display;
         Control         control;
         FileSystem      log_file;
+
+        HrLog           hr_stat;
+
+
         WiFiManager     wm;
 
         WiFiManagerParameter *api_uid_server = NULL;
@@ -153,9 +188,9 @@ class Hardware {
         bool powerSave = false;
 
         void initSensors();
-        
-        void timeInit();
         void serialInit();
+        
+        void timeRead();
 
         int  nextWakeTime();
         void goToSleep() ;
@@ -184,6 +219,8 @@ class Hardware {
         
         void updateSkimlog();
         struct tm *  takeLogDayFile(unsigned int curValue);
+        void processHrData();
+        void processStatData();
     public:
         void init();
         void update();
@@ -196,13 +233,16 @@ class Hardware {
         
         void setTempSwitch(bool val, bool need_save); 
         void setPedoSwitch(bool val, bool need_save);
-        
+        void setPulseSwitch(bool val, bool need_save);
+        void setBaroSwitch(bool val, bool need_save);
+
         void showActivity(displayActivity_t act);
         
         void updateWebApiConfig();
         void showWifiPortal();
         void syncTimeViaWifi();
         void syncStatViaWifi();
+        void syncStatHrViaWifi();
   
         void start_graph_logic(displayActivity_t _activity, unsigned int curValue);
 

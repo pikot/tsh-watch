@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 /*
    Must allocate more memory for the ulp in
    esp32/tools/sdk/include/sdkconfig.h
@@ -20,13 +23,13 @@
 #include "ulp_main.h"
 #include "ulptool.h"
 #include "utils.h"
+#include "version.h"
 
 
 extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
 extern const uint8_t ulp_main_bin_end[]   asm("_binary_ulp_main_bin_end");
 
-const gpio_num_t GPIO_SCL = GPIO_NUM_25;
-const gpio_num_t GPIO_SDA = GPIO_NUM_32;
+
 
 static void startUlpProgram();
 
@@ -34,20 +37,24 @@ int32_t tm = 1;
 int32_t tb = 3600;
 
 void printUlpStatus() {
-    printf_w("ulp status: sample_counter %d, errors: ina219 %d, ds3231 %d, lsm6ds3 %d, mlx90615 %d, max30100 %d\n",
-           ulp_sample_counter, ulp_ina219_error, ulp_ds3231_error, ulp_lsm6ds3_error, ulp_mlx90615_error, ulp_max30100_error);
+    printf_w("ulp status: sample_counter %d, errors: ina219 %d, ds3231 %d, lsm6ds3 %d, mlx90615 %d, max30100 %d, bme280 %d\n",
+           ulp_sample_counter, ulp_ina219_error, ulp_ds3231_error, ulp_lsm6ds3_error, ulp_mlx90615_error, ulp_max30100_error, ulp_bme280_error);
+
+    printf_w("ulp status addr: sample_counter %p, errors: ina219 %p, ds3231 %p, lsm6ds3 %p, mlx90615 %p, max30100 %p, bme280 %p\n",
+           &ulp_sample_counter, &ulp_ina219_error, &ulp_ds3231_error, &ulp_lsm6ds3_error, &ulp_mlx90615_error, &ulp_max30100_error, &ulp_bme280_error);
 /*
     printf_w("ulp status:  sensors 0x%X, sensors_working 0x%X, lsm6ds3_inited 0x%X\n", 
             ulp_sensors_switch_extern, ulp_sensors_working, ulp_lsm6ds3_inited);
 */
     printf_w("ulp status: ulp_sensors_switch_extern 0x%X\n", ulp_sensors_switch_extern);
-    printf_w("read_cnt: ina219 %d,\t lsm6ds3 %d,\t mlx90615 %d,\t max30100 %d\n",
-             ulp_ina219_read_cnt, ulp_lsm6ds3_read_cnt, ulp_mlx90615_read_cnt, ulp_max30100_read_cnt);
-    printf_w("skip_cnt: ina219 %d,\t lsm6ds3 %d,\t mlx90615 %d,\t max30100 %d\n",
-             ulp_ina219_skip_cnt, ulp_lsm6ds3_skip_cnt, ulp_mlx90615_skip_cnt, ulp_max30100_skip_cnt);
-/* 
-    readUlpStack();
+    printf_w("read_cnt: ina219 %d,\t lsm6ds3 %d,\t mlx90615 %d,\t max30100 %d, bme280 %d\n",
+             ulp_ina219_read_cnt, ulp_lsm6ds3_read_cnt, ulp_mlx90615_read_cnt, ulp_max30100_read_cnt, ulp_bme280_read_cnt);
+    printf_w("skip_cnt: ina219 %d,\t lsm6ds3 %d,\t mlx90615 %d,\t max30100 %d, bme280 %d\n",
+             ulp_ina219_skip_cnt, ulp_lsm6ds3_skip_cnt, ulp_mlx90615_skip_cnt, ulp_max30100_skip_cnt, ulp_bme280_skip_cnt);
 
+/*
+  //  readUlpStack();
+/* 
     printf_w("ulp status:  cnt_read %d, icounter %d, ulp_resul_pointer %d\n",
            ulp_cnt_read, ulp_icounter, ulp_resul_pointer);*/
 }
@@ -67,12 +74,19 @@ void runUlp() {
     startUlpProgram();
 }
 
-
-void initUlpProgram()
+void uploadUlpProgram()
 {
+    printf_w("initUlpProgram, memory size %d, %d\n", (ulp_main_bin_end - ulp_main_bin_start),  (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t) );
     esp_err_t err = ulptool_load_binary(0, ulp_main_bin_start,
                                       (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t));
     ESP_ERROR_CHECK(err);
+}
+
+void initUlpProgram()
+{
+   // printf_w("initUlpProgram, memory size %d, %d\n", (ulp_main_bin_end - ulp_main_bin_start),  (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t) );
+    // esp_err_t err = ulptool_load_binary(0, ulp_main_bin_start,
+    //                                  (ulp_main_bin_end - ulp_main_bin_start) / sizeof(uint32_t));
 
     rtc_gpio_init(GPIO_SCL);
     rtc_gpio_set_direction(GPIO_SCL, RTC_GPIO_MODE_INPUT_ONLY);

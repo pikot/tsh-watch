@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef _UTILS_
 #define _UTILS_
 

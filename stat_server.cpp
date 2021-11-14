@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "stat_server.hpp"
 #include "LITTLEFS.h"
 #include "utils.h"
@@ -21,16 +24,16 @@ int parseLastDateResponse(WiFiClientSecure *client, char *lastDate, int lastDate
     return l;
 }
 
-
 int32_t getLastDate(String server, String uid, String token)
 {
     int32_t l_time = -1;//time_t
-
+    printf_w("getLastDate\n");
     size_t allLen = 0;
     String headerTxt =  makeHeader(server, uid, token, "/action/last_tshdata.php", allLen);
     WiFiClientSecure client;
-    if (!client.connect(server.c_str(), PORT)) 
+    if (!client.connect(server.c_str(), PORT)) {
         return l_time;   
+    }
     
     printf_w("getLastDate: header -- %s\n", headerTxt.c_str() );
 
@@ -58,34 +61,39 @@ int32_t getLastDate(String server, String uid, String token)
     return l_time;
 }
 
-void sendStatFile(String server, String uid, String token,  String date, String filename) 
+bool sendStatFile(String server, String uid, String token,  String date, String filename, String urlDir) 
 {
     printf_w("sendStatFile: start send -- %s\n", filename.c_str());
 
     File _file = LITTLEFS.open(filename);
     if (!_file) {
         printf_w("can't open dir '%s'\n", filename);
-        return;
+        return false;
     }
-    String bodyPic =  makeBody("dateFile", date);
-    String bodyEnd =  String("--") + BOUNDARY + String("--\r\n");
+    
+    String bodyPic = makeBody("dateFile", date);
+    String bodyEnd = String("--") + BOUNDARY + String("--\r\n");
 
     size_t allLen = bodyPic.length() +  _file.size()  + bodyEnd.length();
-
-    String headerTxt =  makeHeader(server, uid, token, "/action/send_thsdata.php", allLen);
+    String headerTxt =  makeHeader(server, uid, token, urlDir, allLen);
     printf_w("sendStatFile: header '%s', len %d\n", headerTxt.c_str(), headerTxt.length());
     printf_w("sendStatFile: header '%s', len %d\n", bodyPic.c_str(), bodyPic.length());
 
     WiFiClientSecure client;
-    if (!client.connect(server.c_str(), PORT)) {
-        printf_w("connection failed");  
-        return ;
+    client.setInsecure();    
+    if (!client.connect(server.c_str(), PORT)) 
+    {
+        printf_w("connection failed %s:%d\n", server.c_str(), PORT);  
+        return false;
     }
+
+    
     printf_w("sendStatFile: start send header\n");
     client.print(headerTxt  + bodyPic);
 
     printf_w("sendStatFile: stop send header\n");
-    
+
+
     int ii = 0;
     int nextPacketSize = 0;
     int maxPacketSize  = 2048;
@@ -109,17 +117,31 @@ void sendStatFile(String server, String uid, String token,  String date, String 
     client.print("\r\n" + bodyEnd);
     delay(20);
     long tOut = millis() + TIMEOUT;
+    if  (client.connected() && tOut > millis()) {
+        char status[64] = {0};
+        client.readBytesUntil('\r', status, sizeof(status));
+        printf_w("Status: %s\n", status);
+        if (strcmp(status, "HTTP/1.1 200 OK") != 0) {
+            printf_w( "Unexpected response: %s\n", status);
+            client.stop();
+            return false;
+        }
+    }
     while (client.connected() && tOut > millis()) {
+
         if (client.available()) {
+          
        //     String serverRes = client.readStringUntil('\r');
-             String serverRes = client.readString();
+            String serverRes = client.readString();
             printf_w( "RETURN GET:" );
             printf_w( serverRes.c_str() );
             printf_w( "\n" );
-            return;//(serverRes);
+            client.stop();
+            return true;//(serverRes);
         }
     }
     client.stop();
+    return true;
 }
 
 String makeHeader(String server, String uid, String token, String url, size_t length)

@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #ifndef _DISPLAY_
 #define _DISPLAY_
 
@@ -88,23 +91,29 @@ class Display {
 
         displayActivity_t currentActivity;
         Bitmap batteryPic;
+        Bitmap footprintsPic;
+        Bitmap pressurePic;
+        Bitmap temperaturePic;
 
         uint32_t tsLastDisplayUpdate = 0;
 
         void  showBatteryLevel(uint8_t batLevel);
         void  showDigitalClock(int16_t x, int16_t y);
+        void  showDate(int16_t x, int16_t y);
         void  showTemperatureC(int16_t x, int16_t y, float therm, float pulse);
         void  showSteps(int16_t x, int16_t y, uint16_t steps);
+        void  showPressure(int16_t x, int16_t y, float pressure);
+        void  showGraph(int16_t x, int16_t y);
         
-        void  showWatchActivity(float therm, float pulse, uint16_t steps, uint8_t batLevel);
+        void  showWatchActivity(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel);
     public:
         void init();
         void bitmapInitialize();
         
-        void update(float therm, float pulse, uint16_t steps, uint8_t batLevel, Graph *graph);
+        void update(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel, Graph *graph);
         void setPowerSave(bool powerSave);
         
-        displayActivity_t getCurrentActivity()              { return currentActivity;     };
+        displayActivity_t getCurrentActivity()              { return currentActivity; };
         void setCurrentActivity(displayActivity_t activity) ;//{ currentActivity = activity; };
 
         void drawCGraph( Graph *graph, boolean Redraw);

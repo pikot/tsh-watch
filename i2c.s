@@ -24,11 +24,6 @@
 // RTC_GPIO_9 == GPIO_32
 // RTC_GPIO_8 == GPIO_33
 
-//const gpio_num_t GPIO_SCL = GPIO_NUM_26;
-//const gpio_num_t GPIO_SDA = GPIO_NUM_25;
-
-//.set  SCL_PIN, 7
-//.set  SDA_PIN, 6
 
 .bss
 i2c_started:

@@ -1,14 +1,66 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivanov Ivan 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "stat_records.hpp"
 #include "utils.h"
+#include "version.h"
 #include <TimeLib.h>
+#include <sqlite3.h>
+
+RTC_DATA_ATTR float statDisplay[CACHE_DISPLAY_CNT];
+RTC_DATA_ATTR bool         statDisplayFull = 0;
+RTC_DATA_ATTR uint8_t      statDisplayIdx = 0;
 
 RTC_DATA_ATTR statRecord_t RTC_RECORDS[CACHE_RECORD_CNT];
 RTC_DATA_ATTR uint8_t      statRecord_cnt = 0;
 
-
 char *logFilenamePattern = "%04d-%02d-%02d.txt";
 char *logDirName  = "/log";
 char *skimDirName = "/skim";
+char *hrDirName = "/hr";
+char *hrFileName = "/hr/stat.txt";
+
+
+void addDisplayStat(float val) {
+    printf_w("!!! -- addDisplayStat val %f, statDisplayIdx %d, statDisplayFull %c\n", val, statDisplayIdx, statDisplayFull? 'y':'n');
+    if (0 == val){
+        return;
+    }
+    if ( CACHE_DISPLAY_CNT == statDisplayIdx ) {
+         statDisplayIdx = 0;
+         statDisplayFull = true;
+    }
+    statDisplay[statDisplayIdx] = val;
+    statDisplayIdx++;
+}
+
+uint8_t getDisplayStat(float *buf, uint8_t bufSize) {
+    uint8_t resSize = 0;
+
+    for (int i = 0; i < CACHE_DISPLAY_CNT; i++){    
+         printf_w("i %d, %f \n", i, statDisplay[i]);
+    }
+
+        
+    if (!statDisplayFull) {
+        for (resSize = 0; resSize < statDisplayIdx; resSize++){
+              if ( resSize >= bufSize) 
+                    break;
+              
+              buf[resSize] = statDisplay[resSize];
+        }
+    } else {
+        uint8_t maxWriteSize = min( bufSize, uint8_t(CACHE_DISPLAY_CNT) ), idx = 0;
+
+        for (resSize = 0, idx = statDisplayIdx; resSize < maxWriteSize; resSize++, idx++){
+              if ( CACHE_DISPLAY_CNT == idx ) 
+                    idx = 0;
+              
+              buf[resSize] = statDisplay[idx];
+        }
+    }
+    return resSize;
+}
 
 tmElements_t toTmElement(struct tm *tm)
 {
@@ -28,6 +80,32 @@ int buildDayFName(char *inputBuffer, int inputBuffer_size, char *dir, int16_t ye
     char patternStr[64];
     snprintf(patternStr, sizeof(patternStr), logFilenamePattern, year, month, day);  
     return snprintf(inputBuffer, inputBuffer_size,"%s/%s", dir, patternStr); 
+}
+
+static uint8_t getFileVersion(File _file) {        
+    char buffer[32];
+    uint32_t prev_pos = _file.position();
+    _file.seek(0);
+    //printf_w("getFileVersion 1 fname %s, av %d, position %d\n", _file.name(),  _file.available(),  _file.position());
+    uint32_t l = 0;
+
+    if (_file.available() ) {
+        l = _file.readBytesUntil('\n', buffer, sizeof(buffer));
+        buffer[l] = 0;
+    }
+    _file.seek(prev_pos);
+    
+    //printf_w("getFileVersion 2 fname %s, av %d, position %d\n", _file.name(),  _file.available(),  _file.position());
+
+  //  printf_w("getFileVersion buf %s, l = %d\n",buffer, l);
+    if (l <= 0)
+        return 0; // error
+        
+    int _lVer = 0;
+    if ( 1 != sscanf(buffer, "V:%d", &_lVer) ) { // format error !
+          return 0;
+    }
+    return _lVer;
 }
 
 int fidCompare(const void *i, const void *j)
@@ -61,7 +139,7 @@ uint32_t getArrayLogfiles(time_t lastKnownData, int32_t *resData, uint32_t resDa
     int32_t y=0, m=0, d=0;
     int32_t dates[20];
     int32_t cur_date;
-    
+
     printf_w("get_arrayfiles: start\n");
     snprintf(fPattern, sizeof(fPattern), "%s/%s", dirName, filenamePattern); 
     printf_w("get_arrayfiles: scan %s\n", fPattern );
@@ -84,7 +162,6 @@ uint32_t getArrayLogfiles(time_t lastKnownData, int32_t *resData, uint32_t resDa
     }
     qsort(dates, file_cnt, sizeof(int32_t), fidCompare);
     printf_w("get_arrayfiles: file_cnt %d\n", file_cnt );
-
 /*
     for (int32_t i = 0; i < file_cnt ; i++ ) 
           printf_w("get_arrayfiles: date %d\n", dates[i] );
@@ -160,10 +237,10 @@ void  _rotateLogs( char * dirName, char *filenamePattern, int maxFilesCnt)
         }
     }
 /*
-    char *to_del = "/log/2094-09-20.txt";
+    char *to_del = "/skim/2021-05-03.txt";
     if ( SPIFFS.exists(to_del) )
         SPIFFS.remove(to_del);
-*/
+        */
 }
 
 //-- 
@@ -171,8 +248,8 @@ HourRecordAvg::HourRecordAvg()
 {
     startValue = 0;
     endValue   = 0;
-    summ        = 0;
-    cnt         = 0;
+    summ       = 0;
+    cnt        = 0;
 }
 
 void HourRecordAvg::add(float value)
@@ -197,7 +274,10 @@ void HourRecordAvg::addBack(float value)
 
 float HourRecordAvg::avg()  
 { 
-    return (summ/ cnt);
+    if (cnt > 0) 
+        return (summ/ cnt);
+    else 
+        return 0;
 }
 
 float HourRecordAvg::diffAsc() 
@@ -282,6 +362,7 @@ bool fileRecord::parseLine(char *_buffer, char delimiter)
     }
 
     if (field_cnt != max_cnt) {
+        printf_w("field_cnt %d, max_cnt %d\n", field_cnt , max_cnt);
         free(dataPointers);
         return false; 
     }
@@ -297,10 +378,13 @@ bool fileRecord::parseLine(char *_buffer, char delimiter)
     return true;
 } 
 
+int VERSION_SKIM_MAX[] = {0, SKIMREC_PRESSURE_IDX, SKIMREC_MAX_IDX}; // I add fields to end, soo for 1t version max = REC_PRESSURE_IDX
 
 SkimFileRecord::SkimFileRecord()
 {
-    max_cnt = SKIMREC_MAX_IDX;
+   // version = _version;
+    max_cnt = VERSION_SKIM_MAX[version];
+   
     _data = (skimData_t*) calloc(1, sizeof(skimData_t));
     needWrite = false;
 }
@@ -310,6 +394,11 @@ SkimFileRecord::~SkimFileRecord()
     free(_data) ;
 }
 
+void SkimFileRecord::setVersion(uint8_t _version) {
+    version = _version;
+    max_cnt = VERSION_SKIM_MAX[version];
+}
+        
 void SkimFileRecord::castData(char **dataPointers) 
 {
     if (!_data) {
@@ -318,12 +407,16 @@ void SkimFileRecord::castData(char **dataPointers)
     }       
     skimData_t* _d  = (skimData_t*)_data;
 
+    printf_w("version %d, vcc %s\n", version , dataPointers[SKIMREC_VCC_IDX]);
     _d->Vcc         = atof(dataPointers[SKIMREC_VCC_IDX]);
     _d->Steps       = atoi(dataPointers[SKIMREC_STEPS_IDX]);
     _d->ObjectTempC = atof(dataPointers[SKIMREC_OBJT_IDX]);
+    if (2 == version) {
+        _d->Pressure = atoi(dataPointers[SKIMREC_PRESSURE_IDX]);
+        _d->Humidity = atof(dataPointers[SKIMREC_HUMIDITY_IDX]);
+    }
 }
-
-        
+      
 float SkimFileRecord::getField(skimrecord_idx_t idx)
 {
       float ret;
@@ -339,12 +432,17 @@ float SkimFileRecord::getField(skimrecord_idx_t idx)
           case  SKIMREC_OBJT_IDX:
                 ret =  _d->ObjectTempC;
                 break;
+          case  SKIMREC_PRESSURE_IDX:
+                ret =  _d->Pressure;
+                break;
+          case  SKIMREC_HUMIDITY_IDX:
+                ret =  _d->Humidity;
+                break;
           default :
                 ret = 0;
       }
       return ret;
 }
-
 
 skimData_t *SkimFileRecord::get()
 {
@@ -377,7 +475,11 @@ bool SkimFileRecord::serialize(char *str, size_t str_size)
         return false;
 
     skimData_t* _d  = (skimData_t*)_data;
-    snprintf(str, str_size, "%.2f\t%d\t%.2f\n", 
+    if (2 == version) 
+        snprintf(str, str_size, "%.2f\t%d\t%.2f\t%d\t%.2f\n", 
+               _d->Vcc, _d->Steps, _d->ObjectTempC, (int32_t)_d->Pressure, _d->Humidity );
+    else  
+        snprintf(str, str_size, "%.2f\t%d\t%.2f\n", 
                _d->Vcc, _d->Steps, _d->ObjectTempC);
     return true;
 }
@@ -385,13 +487,23 @@ bool SkimFileRecord::serialize(char *str, size_t str_size)
 void SkimFileRecord::print()
 {  
     skimData_t* _d  = (skimData_t*)_data;
-    printf_w("%.2f\t%d\t%.2f\n", 
+    
+    if (2 == version) 
+        printf_w( "%.2f\t%d\t%.2f\t%d\t%.2f\n", 
+               _d->Vcc, _d->Steps, _d->ObjectTempC, (int32_t)_d->Pressure, _d->Humidity );
+    else  
+        printf_w("%.2f\t%d\t%.2f\n", 
                _d->Vcc, _d->Steps, _d->ObjectTempC);
 }
 
-FileRecord::FileRecord()
+//                    , v1_REC_MAX_IDX,  v2_REC_MAX_IDX
+int VERSION_MAX[] = {0, REC_PRESSURE_IDX, REC_MAX_IDX}; // I add fields to end, soo for 1t version max = REC_PRESSURE_IDX
+
+FileRecord::FileRecord(uint8_t _version)
 {
-    max_cnt = REC_MAX_IDX;
+    version = _version;
+
+    max_cnt = VERSION_MAX[version];
     _data   = (statRecord_t*) calloc(1, sizeof(statRecord_t));
 }
 
@@ -403,12 +515,19 @@ FileRecord::~FileRecord()
 void FileRecord::castData(char **dataPointers) 
 {
     statRecord_t* _d  = (statRecord_t*)_data;
+    
     _d->Time         = atoi(dataPointers[REC_TIME_IDX]);
     _d->Steps        = atoi(dataPointers[REC_STEPS_IDX]);
     _d->HeartRate    = atof(dataPointers[REC_HR_IDX]);        
     _d->AmbientTempC = atof(dataPointers[REC_AMBT_IDX]);
     _d->ObjectTempC  = atof(dataPointers[REC_OBJT_IDX]);
     _d->Vcc          = atof(dataPointers[REC_VCC_IDX]);
+    if (2 == version) {
+        if (dataPointers[REC_PRESSURE_IDX])
+            _d->Pressure  = atof(dataPointers[REC_PRESSURE_IDX]);
+        if (dataPointers[REC_HUMIDITY_IDX])
+            _d->Humidity  = atof(dataPointers[REC_HUMIDITY_IDX]);
+    }
 
     time_t rec_date = _d->Time;
     struct tm *tmstruct   = localtime(&rec_date); 
@@ -447,13 +566,27 @@ uint8_t SkimData::read()
     printf_w("SkimData::read fname %s\n",  fname );
 
     File in_file = SPIFFS.open(fname, "r");   
-    if (in_file.size() > 560) {
-        printf_w("SkimData::read fname %s too big\n",  fname );
+    if (in_file.size() > 1060) {
+        printf_w("SkimData::read fname %s too big - %d\n",  fname , in_file.size() );
         in_file.close();
         SPIFFS.remove(fname);  
         stat.hoursInFile = -1;  
+        skimVersion = CURRENT_LOG_VERSION;
+
         return stat.hoursInFile;
     }
+
+    skimVersion =  getFileVersion(in_file);
+    if (0 == skimVersion) {
+        printf_w("SkimData::read fname %s, bad format\n",  fname );
+        in_file.close();
+        SPIFFS.remove(fname);  
+        stat.hoursInFile = -1;  
+        skimVersion = CURRENT_LOG_VERSION;
+
+        return stat.hoursInFile;
+    }
+    printf_w("SkimData::read getFileVersion %d\n", skimVersion);
     uint8_t line = 0;
     bool  parse_error = false;
     while (in_file.available()) {
@@ -462,27 +595,38 @@ uint8_t SkimData::read()
             line++;
             continue;
         }
-        lineString[0] = '\0';
-        buffer.toCharArray(lineString, sizeof(lineString) );
-        stat.byHours[ line - 1 ].parseLine(lineString, '\t');
-        printf_w("'%d' -- '%s'\n", line - 1, lineString);
         if (line - 1 > 23) {
-            printf_w("SkimData::read: alarm! WTF! %d records in skim file", line - 1);
+            printf_w("SkimData::read: alarm! WTF! %d records in skim file\n", line - 1);
             parse_error = true;
             break;
         }
-        line++;
-    }
-    in_file.close();
+        
+        lineString[0] = '\0';
+        buffer.toCharArray(lineString, sizeof(lineString) );
+        printf_w("get string: %s\n", lineString);
+        stat.byHours[ line - 1 ].setVersion( skimVersion ); // looks like a crutch
+        stat.byHours[ line - 1 ].parseLine(lineString, '\t');
+        stat.byHours[ line - 1 ].print();
+        
+        printf_w("'%d' -- '%s'\n", line - 1, lineString);
 
-    if (!parse_error)
+        line++;
+    }    
+    in_file.close();
+    if (!parse_error) {
         stat.hoursInFile = (line > 0) ? (line - 1) : -1;
+    }
     else {
         SPIFFS.remove(fname);  
         stat.hoursInFile = -1; 
     }
+
+    if ( 0 == skimVersion && stat.hoursInFile == -1) {
+        skimVersion = CURRENT_LOG_VERSION;
+    }
+    
     stat.hoursInTotal = stat.hoursInFile;
-    printf_w("SkimData::read fname %s, hoursInFile %d \n",  fname, stat.hoursInFile );
+    printf_w("SkimData::read fname %s, hoursInFile %d, skimVersion %d \n",  fname, stat.hoursInFile , skimVersion);
 
     return stat.hoursInFile;
 }
@@ -493,20 +637,20 @@ void SkimData::write()
     char lineString[255];
   //  return;////////
     buildDayFName(fname, sizeof(fname), skimDirName, _year , _month, _day);
-    printf_w("SkimData::write, try to write %s \n", fname);
+    printf_w("SkimData::write, try to write %s, skimVersion %d \n", fname, skimVersion);
 
     char *modifier = "w";
     if (SPIFFS.exists(fname) )
         modifier = "a";
-     
+
     File in_file  = SPIFFS.open(fname, modifier);
     if (!in_file) 
         printf_w("file open failed %s\n", fname); 
     
-    if ("w" == modifier)
-        in_file.print("V:1\n");
+    if ("w" == modifier) {
+        in_file.printf("V:%d\n", skimVersion); // take it frome big file
      //   _rotateLogs( skimDirName, logFilenamePattern, maxFilesCnt);
-    
+    }
     for (int h = 0; h < HOURS_IN_DAY; h++  ) {
         if (stat.byHours[h].isWritable()) {
               stat.byHours[h].serialize(lineString, sizeof(lineString) );
@@ -519,9 +663,9 @@ void SkimData::write()
     in_file.close();
 }
 
-bool SkimData::processLine(char *lineString) 
+bool SkimData::processLine(uint8_t fVersion, char *lineString) 
 {
-    FileRecord fr;
+    FileRecord fr(fVersion);
     bool parsed = fr.parseLine(lineString, '\t');
     if (!parsed) {
         printf_w("WTF! bad log format\n");
@@ -560,7 +704,10 @@ bool SkimData::aggreggateRecord(int _hour, statRecord_t *stat_rec)
     r4s->Steps.aggregateStringBack( _hour , stat_rec->Steps);
     r4s->Temp.aggregateStringBack(  _hour , stat_rec->ObjectTempC);
     r4s->Vcc.aggregateStringBack(  _hour , stat_rec->Vcc);
-
+    if (2 == skimVersion) { 
+        r4s->Pressure.aggregateStringBack(  _hour , stat_rec->Pressure);
+        r4s->Humidity.aggregateStringBack(  _hour , stat_rec->Humidity);
+    }
     r4s->startHourInLog = _hour;
     if (0 == r4s->endHourInLog) 
          r4s->endHourInLog = _hour;
@@ -590,7 +737,15 @@ void SkimData::prepareFromLog()
     buildDayFName(fname, sizeof(fname), logDirName,  _year , _month, _day);
     
     File f = SPIFFS.open(fname, "r");   
-
+    uint8_t logVersion  = getFileVersion(f);
+    if (0 == logVersion || skimVersion != logVersion) { // 
+          printf_w("SkimData::prepareFromLog: Ahtung. File %s, has bad format. Stop preparation.\n", fname );
+          return;
+    }
+    if (skimVersion != logVersion) {
+          printf_w("SkimData::prepareFromLog:Alarm skimVersion %d, logVersion %d. Stop preparation.\n", skimVersion, logVersion );
+          return;
+    }
     long pos = f.size(), line_pos = 0;
     
     char buf[MAX_LINE_SIZE];
@@ -603,7 +758,7 @@ void SkimData::prepareFromLog()
     buf[ line_pos ] = 0;
     line_pos       -= 1;
 
-    char   *dataPointers[REC_MAX_IDX];
+   // char   *dataPointers[REC_MAX_IDX];
     pos -= 1; // skip eof
 
     while (true) {
@@ -631,7 +786,7 @@ void SkimData::prepareFromLog()
         if ('\n' == _byte) {
               char *lineString =  &buf[line_pos + 1];
            //   printf_w("SkimData::prepareFromLog fname %s, get line '%s', pos %d, line_pos %d \n",  fname, lineString, pos, line_pos); // 
-              if (false == processLine(lineString))
+              if (false == processLine(logVersion, lineString))
                     break;
 
               line_pos = MAX_LINE_SIZE - 1;
@@ -664,11 +819,56 @@ bool SkimData::isToday( )
     return false;
 }
 
-void skimData_t::fill_data(float vcc , uint32_t steps , float objC)
+void skimData_t::fill_data(float vcc , uint32_t steps , float objC, float pressure, float humidity)
 {
       Vcc         = vcc;
       Steps       = steps;
       ObjectTempC = objC;
+      Pressure = pressure;
+      Humidity = humidity;
+}
+
+
+bool skimData_t::fill_data(uint8_t version, rawForSkim_t *r4s, int _hour)
+{
+      bool ret = false;
+      switch (version) {
+            case 2:
+                ret = fill_data_v2(r4s, _hour);
+            break;
+            default:
+                ret = fill_data_v1(r4s, _hour);
+            break;
+      }
+      return ret;
+}
+
+bool skimData_t::fill_data_v1(rawForSkim_t *r4s, int _hour)
+{
+      HourRecordAvg *_s = r4s->Steps.hourRecord(_hour); 
+      HourRecordAvg *_t = r4s->Temp.hourRecord(_hour);
+      HourRecordAvg *_v = r4s->Vcc.hourRecord(_hour);
+
+      if (!_s || ! _t || !_v    ) {
+                return false;
+      }
+      fill_data(_v->avg(), (int)_s->diffAsc(), _t->avg(), 0, 0);
+      return true;
+}
+
+bool skimData_t::fill_data_v2(rawForSkim_t *r4s, int _hour)
+{
+      HourRecordAvg *_s = r4s->Steps.hourRecord(_hour); 
+      HourRecordAvg *_t = r4s->Temp.hourRecord(_hour);
+      HourRecordAvg *_v = r4s->Vcc.hourRecord(_hour);
+      HourRecordAvg *_p = r4s->Pressure.hourRecord(_hour);
+      HourRecordAvg *_h = r4s->Humidity.hourRecord(_hour);
+      if (!_s || ! _t || !_v  || !_p || !_h  ) {
+                return false;
+      }
+      printf_w("skimData_t::fill_data_v2 t %f, p %f, h %f\n", _t->avg(), _p->avg(), _h->avg());
+      fill_data(_v->avg(), (int)_s->diffAsc(), _t->avg(), _p->avg(), _h->avg());
+      return true;
 }
 
 bool SkimData::processRaw() 
@@ -682,19 +882,15 @@ bool SkimData::processRaw()
     
     for (int h = start_hour; h <= r4s->endHourInLog; h++) {
         skimData_t new_record;
+        stat.byHours[ h ].setVersion( skimVersion ); // looks like a crutch
 
-        if (r4s->startHourInLog > h)
-            new_record.fill_data(0, 0, 0);
-        else {         
-            HourRecordAvg *_s = r4s->Steps.hourRecord(h); 
-            HourRecordAvg *_t = r4s->Temp.hourRecord(h);
-            HourRecordAvg *_v = r4s->Vcc.hourRecord(h);
-            if (!_s || ! _t || !_v ) {
+        if (r4s->startHourInLog > h) {
+            new_record.fill_data( (float)0, 0, (float)0, (float)0, (float)0) ;
+        }
+        else {
+            if ( false == new_record.fill_data(skimVersion, r4s, h)) {
                 printf_w( "alarm! can't take data for hour %d, date %02d.%02d%.04d. It should be ready. Stop process.\n", h, _day, _month, _year);
-                break;
             }
-   //      _s->print();_t->print(); _v->print();
-            new_record.fill_data(_v->avg(), (int)_s->diffAsc(), _t->avg()); 
         }
         printf_w("SkimData::processRaw: h %d, new_record(Steps %d, ObjectTempC %f, Vcc %f)\n",  
                   h, new_record.Steps , new_record.ObjectTempC,  new_record.Vcc );
@@ -730,46 +926,61 @@ void SkimData::process()
 //============================================================================================
 // File System
 
-void FileSystem::init() 
+void del_file(char *f_name)
 {
-   // logDirName = "/log" ;
-      
-   // SPIFFS.begin(true);
-   /*
+    SPIFFS.remove( f_name ); 
+}
+void FileSystem::printStatus() {
     size_t totalBytes = 0, usedBytes = 0;
     totalBytes = SPIFFS.totalBytes();
     usedBytes  = SPIFFS.usedBytes();
 
     String temp_str = "totalBytes = " + String(totalBytes) + ", usedBytes = " +  String(usedBytes);
     println_w(temp_str);
-*/
-    char fname[32];
-    
+}
+
+void FileSystem::init() 
+{
+    SPIFFS.begin();
+   
+    scanLogDir(); //!!! log all data !!! //
+    // printStatus();
+    char fname[32]; 
     buildDayFName(fname, sizeof(fname), logDirName, year(), month(), day());
-   // scanLogDir(); //!!! log!!!
-    printf_w("open file %s\n", fname);  //  "открыть файл не удалось"
+    printf_w("open file %s\n", fname);  
 
     File root = SPIFFS.open(logDirName);
     if (!root)  SPIFFS.mkdir(logDirName);
     else        root.close();
     
     char *modifier = "w";
-    if (SPIFFS.exists(fname))
-        modifier = "a";
-        
+    if (SPIFFS.exists(fname)) 
+        modifier = "a+";
+
     if (!_canWrite)      
         return;
     _file = SPIFFS.open(fname, modifier);
     if (!_file) {
-        printf_w("file open failed %s\n", fname);  //  "открыть файл не удалось"
+        printf_w("file open failed %s\n", fname);  
     }
     if ("w" == modifier) {
-        _file.print("V:1\n");
+        logVersion = CURRENT_LOG_VERSION;
+        _file.printf("V:%d\n", logVersion);
         
         rotateLogs();
     }
-   // rotateLogs();//0000000000
+    else {
+        uint8_t fVersion  = getFileVersion(_file);
+        if (0 == fVersion) { // 
+            printf_w("FileSystem::init: Ahtung. File %s, has bad format. Block write to FS.\n", fname );
+            _canWrite = false;
+        }
+        logVersion = fVersion;
+        printf_w("FileSystem::init logVersion %d\n", logVersion);
+    }
+//    rotateLogs();//0000000000!!!!!!!!!!!!!!!!!!!!!!!!!!
 }
+
 
 int FileSystem::filenameDate(char *inputBuffer, int inputBuffer_size, int16_t year, int8_t month, int8_t  day) 
 {
@@ -788,10 +999,6 @@ void catFile(File f)
         write_w(f.read());
 }
 
-void del_file(char *f_name)
-{
-    SPIFFS.remove( f_name ); 
-}
 
 bool str_to_tm (char **dataPointers, struct tm *tm_res ) 
 {
@@ -869,7 +1076,7 @@ bool  parseLine(char *_buffer, char **dataPointers, int dataPointersSize, char d
             return false;
       return true;
 } 
-
+/*
 int aggregate_for_hour(char **dataPointers, int dataPointersSize, record_idx_t field_idx, float*temp_data, int8_t *temp_data_cnt)
 {
     int current_hour = 0;
@@ -885,15 +1092,21 @@ int aggregate_for_hour(char **dataPointers, int dataPointersSize, record_idx_t f
 
     return tmstruct->tm_hour;
 }  
-
+*/
 void FileSystem::scanLogDir() 
 {
  //   printf_w("start scanLogDir /\n");
  //   listDir(SPIFFS, "/");
-    printf_w("start scanLogDir %s\n", logDirName);
+ 
+ /*     
+  *      printf_w("start scanLogDir %s\n", logDirName);
     listDir(SPIFFS, logDirName, false, NULL);
     printf_w("start scanLogDir %s\n", skimDirName);
     listDir(SPIFFS, skimDirName, false, NULL);
+ 
+    printf_w("start scanLogDir %s\n", hrDirName);
+    listDir(SPIFFS, hrDirName, false, NULL);
+     */
    /*
     File fff = SPIFFS.open("/log/2021-01-17.txt");
     catFile(fff);
@@ -910,8 +1123,13 @@ void FileSystem::saveRecordsToFile()
     statRecord_t *record = &RTC_RECORDS[0];
     char buf[MAX_LINE_SIZE];
     for (int i = 0; i < statRecord_cnt; i++, record++) {
-        snprintf(buf, sizeof(buf), "%d\t%.2f\t%d\t%.2f\t%.2f\t%.2f\n", 
+        if ( 2 == logVersion) {
+            snprintf(buf, sizeof(buf), "%d\t%.2f\t%d\t%.2f\t%.2f\t%.2f\t%d\t%.2f\n", 
+                record->Time, record->Vcc, record->Steps, record->HeartRate, record->AmbientTempC, record->ObjectTempC, (int32_t)record->Pressure, record->Humidity);
+        }else { // default log 
+            snprintf(buf, sizeof(buf), "%d\t%.2f\t%d\t%.2f\t%.2f\t%.2f\n", 
                 record->Time, record->Vcc, record->Steps, record->HeartRate, record->AmbientTempC, record->ObjectTempC );
+        }
         printf_w(buf);
         _file.print(buf);
     }
@@ -920,23 +1138,24 @@ void FileSystem::saveRecordsToFile()
 void FileSystem::rotateLogs() 
 {
     _rotateLogs( logDirName, filenamePattern, MAX_FILES_CNT);
-    _rotateLogs( skimDirName, logFilenamePattern, 30);
+    _rotateLogs( skimDirName, logFilenamePattern, MAX_FILES_CNT);
 }
 
 void FileSystem::writeLog( statRecord_t *record )
 {
-  //  printf_w("RTC_RECORDS %p, statRecord_cnt %d\n", RTC_RECORDS, statRecord_cnt );
     //return ;
-    if (record->Time < START_GOOD_DATE) 
+    if (record->Time < START_GOOD_DATE) {
+        printf_w("writeLog: time %d, record skipped, expected date more 1600000000 (Sun Sep 13 15:26:40 MSK 2020)\n", record->Time ); 
         return;
+    }
     memcpy( (void*) &RTC_RECORDS[statRecord_cnt], (void*) record, sizeof(statRecord_t) );
     
     if (CACHE_RECORD_CNT == (statRecord_cnt + 1)){
         saveRecordsToFile();
         statRecord_cnt = 0;
-    } else 
+    } else {
         statRecord_cnt++;
-    
+    }
 }
 
 void FileSystem::close()
@@ -944,4 +1163,156 @@ void FileSystem::close()
     if ( !_canWrite )
         return;
     _file.close();
+}
+
+
+RTC_DATA_ATTR statPulse_t RTC_PULSE_CACHE[ MAX30100_CACHE_RECORD_CNT ];
+RTC_DATA_ATTR int32_t pulseCache_cnt = 0;
+
+void HrLog::copyFromUlpPulse( time_t date, uint32_t *raw_data, uint32_t cnt_data) {
+
+    statPulse_t *pd = RTC_PULSE_CACHE + pulseCache_cnt;
+    pd->date = date;
+    printf_w("copyFromUlpPulse %d, RTC_PULSE_CACHE %p, pd %p\n", pd->date, RTC_PULSE_CACHE, pd);
+    
+    for( int i = 0; i < cnt_data; i++ ) { // I should copy 1 by 1, ulp use uin32 words but operate with  uint16
+        pd->data[i] = (uint16_t) *(raw_data + i) ;
+    }
+    pulseCache_cnt++;
+}
+
+
+void HrLog::writeLog( )
+{
+  //  printf_w("RTC_RECORDS %p, statRecord_cnt %d\n", RTC_RECORDS, statRecord_cnt );
+    //return ;
+    printPulseCashe();
+
+    if (MAX30100_CACHE_RECORD_CNT == pulseCache_cnt ){
+        saveRecordsToFile();
+        pulseCache_cnt = 0;
+    }   
+}
+void HrLog::writeRecordToLog( time_t date, uint32_t *raw_data, uint32_t cnt_data) {
+    copyFromUlpPulse(date, raw_data, cnt_data);
+    writeLog();
+}
+
+void HrLog::insertHrRecord(time_t evTime, uint16_t *evData, uint32_t evDataSize) {
+         _file.printf("%d|", evTime);
+       //  _file.printf("%d", evDataSize);
+         for (int i = 0; i < evDataSize; i++){
+                if(i != 0)
+                      _file.printf("|");
+               _file.printf("%d", evData[i]);
+         }
+         _file.printf("\n");
+}
+
+void HrLog::saveRecordsToFile()
+{
+    if ( !_canWrite )
+        return;
+        
+    init();
+    statPulse_t *record = &RTC_PULSE_CACHE[0];
+
+    for (int i = 0; i < pulseCache_cnt; i++, record++) {
+          insertHrRecord( record->date, record->data, MAX30100_ARRAY_SIZE);
+    }
+    
+    close();
+
+}
+
+void HrLog::printPulseCashe()
+{
+    statPulse_t *record = &RTC_PULSE_CACHE[0];
+    char buf[MAX_LINE_SIZE];
+    printf_w("pulseCache_cnt %d\n", pulseCache_cnt);
+    for (int i = 0; i < pulseCache_cnt; i++, record++) {
+          printf_w("date %d", record->date);
+          printf_w("\t%d\n", record->data[0]);
+    }
+}
+
+void HrLog::close()
+{
+    if ( !_canWrite )
+        return;
+    _file.close();
+}
+
+void HrLog::deleteBigFile() {  // for debug
+
+    printf_w("deleteBigCurFile: file %s\n", hrFileName);  
+    
+    if ( !SPIFFS.exists(hrFileName)) {
+        return;
+    }
+    
+    File file = SPIFFS.open(hrFileName, "r");
+    int32_t fsize = file.size();
+    file.close();
+    if ( fsize > 20000 ) {
+          printf_w("remove big file %s -- %d\n",  hrFileName, fsize );
+          SPIFFS.remove(hrFileName);
+    }
+}
+
+uint32_t HrLog::logSize() 
+{ 
+    printf_w("HrLog::logSize %s \n", hrFileName);
+
+    File root = SPIFFS.open(hrDirName);
+    if ( !root )  
+        return 0;
+    if ( !SPIFFS.exists(hrFileName) ) 
+        return 0;
+    
+    File file = SPIFFS.open(hrFileName, "r");
+    if ( !file )
+        return 0;
+    uint32_t res  = file.size();
+    printf_w("HrLog::logSize %d \n", res);
+    file.close();
+    return res;
+}
+
+void HrLog::init() 
+{ 
+    SPIFFS.begin();
+    File root = SPIFFS.open(hrDirName);
+    if (!root)  SPIFFS.mkdir(hrDirName);
+    else        root.close();
+   //  initHrDb();
+   
+ 
+    printf_w("open file %s\n", hrFileName);  
+    
+    char *modifier = "w";
+    if (SPIFFS.exists(hrFileName)) 
+        modifier = "a+";
+
+    if (!_canWrite)      
+        return;
+    _file = SPIFFS.open(hrFileName, modifier);
+    if (!_file) {
+        printf_w("file open failed %s\n", hrFileName);  
+    }
+ 
+    if ("w" == modifier) {
+        logVersion = CURRENT_HR_VERSION;
+        _file.printf("V:%d\n", logVersion);
+    }
+    else {
+        uint8_t fVersion  = getFileVersion(_file);
+        if (0 == fVersion) { // 
+            printf_w("HrLog::init: Ahtung. File %s, has bad format. Block write to FS.\n", hrFileName );
+            _canWrite = false;
+        }
+        logVersion = fVersion;
+        printf_w("HrLog::init logVersion %d\n", logVersion);
+    }
+//    rotateLogs();//0000000000!!!!!!!!!!!!!!!!!!!!!!!!!!
 }

@@ -1,0 +1,40 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
+#ifndef _I2C_MAX30100_
+#define _I2C_MLX30100_
+
+#define MAX30100_ADDR  0x57
+
+#define MAX30100_ARRAY_SIZE 100 // samples, set 4*ARRAY_SIZE  in max30100_raw_data size to count bytes // was 125
+
+#define MAX30100_EXPECTED_PART_ID       0x11
+#define MAX30100_SAMPRATE_50HZ 0x00
+#define MAX30100_MC_SHDN       0x80 // 1 << 7
+
+// LED Configuration 
+#define MAX30100_LED_CURR_7_6MA 0x02
+#define MAX30100_LED_CURR_27_1MA 0x08
+#define MAX30100_LED_CURR_50MA 0x0f
+
+#define MAX30100_SPC_PW_200US_13BITS 0x00
+#define MAX30100_SPC_PW_1600US_16BITS 0x03
+#define MAX30100_SPC_SPO2_HI_RES_EN   0x40
+
+#define MAX30100_MODE_HRONLY  0x02
+#define MAX30100_MODE_SPO2_HR 0x03
+
+#define MAX30100_FIFO_DEPTH    0x10             //  link with MAX30100_FIFO_DEPTH_MINUS_ONE (don't want to call sub)
+#define MAX30100_FIFO_DEPTH_MINUS_ONE 0x0f    //  link with MAX30100_FIFO_DEPTH (don't want to call sub)
+
+#define MAX30100_REG_FIFO_WRITE_POINTER    0x02
+#define MAX30100_REG_FIFO_OVERFLOW_COUNTER 0x03
+#define MAX30100_REG_FIFO_READ_POINTER     0x04
+#define MAX30100_REG_FIFO_DATA 0x05
+#define MAX30100_REG_MODE_CONFIGURATION 0x06
+#define MAX30100_REG_SPO2_CONFIGURATION 0x07
+#define MAX30100_REG_LED_CONFIGURATION  0x09
+#define MAX30100_REG_PART_ID 0xff
+
+
+#endif
