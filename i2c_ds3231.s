@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+   
 #include "soc/rtc_cntl_reg.h"
 #include "soc/rtc_io_reg.h"
 #include "soc/soc_ulp.h"
@@ -12,6 +15,7 @@
    .global ds3231_error 
 ds3231_error:
    .long 0
+
    .global ds3231_second 
 ds3231_second:
    .long 0
@@ -58,7 +62,6 @@ ds3231_set_year:
    .long 0
    
 
-   
 .text
 
 /*
@@ -85,29 +88,47 @@ ds3231_set_year:
 
 */
 
+
+/// !!!!!!!!!!!!! look at code witch changes sda pin!!
+
    .global ds3231_getDateTime
 ds3231_getDateTime:
-   store ds3231_error 255
+    move r0, ds3231_error  // test for init error SENSOR_STATUS_HW_ERROR
+    ld r0, r0, 0x00
+    jumpr  ds3231_sensor_found_get, SENSOR_STATUS_HW_ERROR, lt
+    jumpr  ds3231_sensor_found_get, SENSOR_STATUS_HW_ERROR, gt
+    ret
+ds3231_sensor_found_get:
+
+   move r1, i2c_MultyHandler       // set handler for multy
+   move r0, processBytesFromStack
+   st r0, r1, 0 
 
    move r1, DS3231_ADDR
    push r1
    move r1, DS3231_REG_TIME
    push r1 
    move r0, 7  
-   move r2, ds3231_year  
+   move r2, ds3231_year 
    psr
-   jump readMULTY
+   jump readMultyToStack
+
    add r3,r3,2 // remove call parameters from stack
 
-   move r0,r2 // test for error
+   move r0, r2 // test for error
    jumpr ds3231_fail_read,1,ge
+   
    store ds3231_error 0
    ret
 
 
    .global ds3231_setDateTime
 ds3231_setDateTime:
-   store ds3231_error 255
+    move r0, ds3231_error  // test for init error SENSOR_STATUS_HW_ERROR
+    jumpr  ds3231_sensor_found_set, SENSOR_STATUS_HW_ERROR, lt
+    jumpr  ds3231_sensor_found_set, SENSOR_STATUS_HW_ERROR, gt
+    ret
+ds3231_sensor_found_set:
    
    move r1, DS3231_ADDR
    push r1
@@ -123,6 +144,7 @@ ds3231_setDateTime:
 
    move r0,r2 // test for error
    jumpr ds3231_fail_read,1,ge
+   
    store ds3231_error 0
    ret
 
@@ -131,7 +153,3 @@ ds3231_setDateTime:
 ds3231_fail_read:
    store ds3231_error SENSOR_STATUS_READ_ERROR
    ret
-
-
-   
-   

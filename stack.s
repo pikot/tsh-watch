@@ -13,22 +13,15 @@
 /* ULP assembly files are passed through C preprocessor first, so include directives
    and C macros may be used in these files 
  */
+#include "version.h"
+
 // RTC_GPIO_6 == GPIO_25
 // RTC_GPIO_7 == GPIO_26
 // RTC_GPIO_9 == GPIO_32
 // RTC_GPIO_8 == GPIO_33
-//const gpio_num_t GPIO_SCL = GPIO_NUM_26;
-//const gpio_num_t GPIO_SDA = GPIO_NUM_25;
 
-.set  SCL_PIN, 9 
-.set  SDA_PIN, 6
-
-
-.set SENSOR_STATUS_OK,         0x00
-.set SENSOR_STATUS_HW_ERROR,   0X01
-.set SENSOR_STATUS_CFG_ERROR,  0X02
-.set SENSOR_STATUS_READ_ERROR, 0X03
-
+.set  SCL_PIN, ULP_SCL_PIN
+.set  SDA_PIN, ULP_SDA_PIN
 
 .set SENSOR_WSTATUS_AWAKE,      0x01
 .set SENSOR_WSTATUS_SLEEP,      0x02
@@ -163,3 +156,29 @@
     or r0, r0, \value
     write_i2c \ADDR \REG r0 \fail
 .endm
+
+/*
+.macro update_i2c_register ADDR REG fail mask value
+   move r1,\ADDR
+   push r1
+   move r1,\REG
+   push r1
+   psr
+   jump read8 
+   move r1,r0 // save result
+   move r0,r2 // test for error
+   jumpr no\fail, 0, eq
+   jump \fail
+no\fail:
+   and r0, r1, \mask // take result from r1
+   or r0, r0, \value
+   push r0
+   psr
+   jump write8
+   add r3, r3, 3 // remove call parameters from stack
+   move r0, r2 // test for error in r2
+   jumpr \fail,1,ge
+
+
+
+.endm*/

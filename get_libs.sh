@@ -6,9 +6,18 @@ ARDUINO_LIB_DIR=~/Documents/Arduino/libraries/
 #ARDUINO_LIB_DIR=~/Documents/tmp_test/
 
 declare -a arr=(
-    "git@github.com:pikot/Arduino-MAX30100.git"
+    "git@github.com:PaulStoffregen/Time.git"
     "git@github.com:arduino-libraries/NTPClient.git"
-    "git@github.com:pikot/WiFiManager.git"
+    "git@github.com:pikot/WiFiManager.git" # development 
+    "git@github.com:bblanchon/ArduinoJson.git"
+    "git@github.com:lorol/LITTLEFS.git"
+    "git@github.com:olikraus/U8g2_Arduino.git" 
+    "git@github.com:davetcc/TaskManagerIO.git" #1.6.4
+    "git@github.com:davetcc/IoAbstraction.git" 
+    "git@github.com:davetcc/tcMenuLib.git" # 1.6.1
+    "git@github.com:stevemarple/AsyncDelay.git"
+    "git@github.com:stevemarple/SoftWire.git"
+    "git@github.com:siara-cc/esp32_arduino_sqlite3_lib.git"
     )
 
 function create_dir_ifnotexist {

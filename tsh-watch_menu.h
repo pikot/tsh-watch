@@ -38,6 +38,8 @@ extern U8g2MenuRenderer renderer;
 // Global Menu Item exports
 
 extern ActionMenuItem menuClose;
+extern BooleanMenuItem menuBaroMeter;
+
 extern BooleanMenuItem menuPulseMeter;
 extern BooleanMenuItem menuPedoMeter;
 extern BooleanMenuItem menuTemperature;
@@ -61,6 +63,8 @@ void CALLBACK_FUNCTION onDateCh(int id);
 void CALLBACK_FUNCTION onTimeCh(int id);
 void CALLBACK_FUNCTION onTimezoneCh(int id) ;
 void CALLBACK_FUNCTION onTemperatureCh(int id);
+void CALLBACK_FUNCTION onPulseMeterCh(int id);
+void CALLBACK_FUNCTION onBaroMeterCh(int id);
 void CALLBACK_FUNCTION onPedoMeterCh(int id);
 void CALLBACK_FUNCTION onGraphTempPressed(int id);
 void CALLBACK_FUNCTION onGraphStepsPressed(int id);

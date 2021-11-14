@@ -1,3 +1,6 @@
+//  SPDX-FileCopyrightText: 2020-2021 Ivan Ivanov 
+//  SPDX-License-Identifier: GPL-3.0-or-later
+
 #include "hardware.hpp"
 
 RTC_DATA_ATTR uint8_t SensorState = SENSOR_AWAKE;
@@ -7,12 +10,8 @@ RTC_DATA_ATTR time_t nextScanTime = 0;
 
 RTC_DATA_ATTR int8_t  today  = 0;
 
-RTC_DATA_ATTR float    ina219_current = 0;
-RTC_DATA_ATTR uint32_t ina219_current_cnt = 0;
-
-//RTC_DATA_ATTR time_t   wifi_last_connect = 0; 
-//RTC_DATA_ATTR bool     force_wifi_connection = true;
-RTC_DATA_ATTR uint8_t   lastSkimlogUpdateHour = 0;
+RTC_DATA_ATTR time_t   nextAttemptStatSyncTime = 0; 
+RTC_DATA_ATTR uint8_t  lastSkimlogUpdateHour = 0;
 
 void printPinStatus() 
 {
@@ -32,9 +31,8 @@ void Hardware::serialInit()
 #endif
 }
 
-void Hardware::timeInit()
+void Hardware::timeRead()
 {
-    sTime.init();
     sTime.read();
 
     currentTime = sTime.currentTime();
@@ -58,13 +56,12 @@ bool Hardware::isWakeByDeepsleep(esp_sleep_wakeup_cause_t wakeupReason)
 
 bool Hardware::isNewDay()
 {
-    if (today != day()) {
+    if ( today != day() ) {
          today = day();
          return true;
     }
     return false;
 }
-
 
 void Hardware::init() 
 {
@@ -72,52 +69,74 @@ void Hardware::init()
     esp_deep_sleep_disable_rom_logging();
 
     displaySleepTimer = millis();
-    
+
     wakeupReason      = esp_sleep_get_wakeup_cause();
     isAfterDeepsleep  = isWakeByDeepsleep(wakeupReason);
 
     serialInit();
     SPIFFS.begin(true); // need for logs or config 
+    printf_w("fs stat: totalBytes %d,  usedBytes %d\n", SPIFFS.totalBytes(), SPIFFS.usedBytes());
 
     cfg.init(); // cfg -> settings
     updateFromConfig(); // cfg -> hardware///  yep, pretty sheety and best case scenario is to have one place to sync directly
-
+    
     printFsmState( __func__, __LINE__ );
     if (false == isAfterDeepsleep) {
         memset(&RTC_RECORDS, 0, sizeof(statRecord_t));
-
-        setupUlp( wakeupReason );
+        uploadUlpProgram();
+        initSensors();
+        initUlpProgram();
+        updateFromConfig(); // cfg -> hardware///  yep, pretty sheety and best case scenario is to have one place to sync directly
         runUlp();
     }
-    
+
    // print_all_stat(); //!!!!!!!!!!!!!!!!!!
     printf_w("wakeupReason %s, statRecord_cnt %d\n",  espSleepWake[wakeupReason], statRecord_cnt );
 
     if (CONTROL_SLEEPING == ControlState && ESP_SLEEP_WAKEUP_EXT0 == wakeupReason)
          ControlState = CONTROL_AWAKE;
 
-    timeInit();  // timer should work alltime
+    timeRead();
 
     if (SENSOR_SLEEPING == SensorState && nextScanTime <= currentTime) 
          SensorState = SENSOR_AWAKE;
-    
-    initSensors();
+
     if (CONTROL_AWAKE == ControlState) {
         display.init();
         control.init();
     }
-    
+
     printFsmState( __func__, __LINE__);    
 }
 
+char swTxBuffer[32];
+char swRxBuffer[32];
+
 void Hardware::initSensors() 
 {
-    sTerm.init(); 
-    sCurrent.init(&ina219_current); 
-    sPulse.init();
-    sGyro.init();  // Pedometer consume small energy, can wake alltime (convinient for steps observation)
-       
-    log_file.init();
+    ulpI2c = new SoftWire(ulpSdaPin, ulpSclPin);
+
+    ulpI2c->setTxBuffer(swTxBuffer, sizeof(swTxBuffer));
+    ulpI2c->setRxBuffer(swRxBuffer, sizeof(swRxBuffer));
+    ulpI2c->setTimeout_ms(40);
+    ulpI2c->begin();
+    ulpI2c->setTimeout_ms(100);
+
+    printf_w("initSensors: ulpSdaPin %d, ulpSclPin %d\n", ulpSdaPin, ulpSclPin );
+
+    printUlpStatus();
+
+    sTime.init(ulpI2c);
+    sTerm.init(ulpI2c);
+    sCurrent.init(ulpI2c); 
+    sPulse.init(ulpI2c);
+    sGyro.init(ulpI2c);  
+    sBME280.init(ulpI2c);
+
+    printUlpStatus();
+    
+  //  main_core_inited = 1;
+
     printFsmState( __func__, __LINE__);    
 }
 
@@ -134,16 +153,18 @@ void Hardware::printFsmState( const char *funcName, uint32_t lineNumber)
 
 void Hardware::printStat(statRecord_t *record) 
 {
-    printf_w("Stat:  Time '%d' Steps '%d', Heart rate '%f', SpO2: '%f', Ambient: '%f', Object: '%f', Vcc: '%f'\n",
+    printf_w("Stat:  Time '%d' Steps '%d', Heart rate '%f', SpO2: '%f', Ambient: '%f', Object: '%f', Pressure %f, Humidity %f, Vcc: '%f'\n",
           record->Time,
           record->Steps, record->HeartRate, record->SpO2, 
-          record->AmbientTempC, record->ObjectTempC, record->Vcc 
+          record->AmbientTempC, record->ObjectTempC, 
+          record->Pressure, record->Humidity, 
+          record->Vcc 
     );
 }
 
 void Hardware::printAllStat() 
 {
-    println_w("printAllStat");
+    printf_w("printAllStat: statRecord_cnt %d\n", statRecord_cnt );
     for (int i = 0; i < CACHE_RECORD_CNT; i++) {
          print_w( i ); print_w( ". ");
          printStat(&RTC_RECORDS[i]);
@@ -153,10 +174,12 @@ void Hardware::printAllStat()
 
 void Hardware::readSensors()
 {
+    printf_w("readSensors\n");
     sGyro.read();
     sTerm.read();
     sPulse.read();
     sCurrent.read();
+    sBME280.read();
 }
 
 void Hardware::updateSkimlog() 
@@ -171,11 +194,46 @@ void Hardware::updateSkimlog()
     free(skim_log);
     lastSkimlogUpdateHour = hour();
 }
+
+void Hardware::processHrData() {
+    if ( !sPulse.dataIsReady() ) 
+        return;
+
+    if (hr_stat.logSize() < HR_LOG_MAX_SIZE ) { //  data take from ulp  
+         hr_stat.writeRecordToLog( now(), ulp_max30100_raw_data, MAX30100_ARRAY_SIZE) ;
+    }
+    else 
+    if ( currentTime > nextAttemptStatSyncTime )  {
+        if ( sCurrent.getVcc() < 4.0) { 
+              printf_w("processHrData: battery is low, skip wifi sync\n");
+              return ;
+        }
+        nextAttemptStatSyncTime = currentTime + HR_LOG_SYNC_STEP; // in case reboot during atempt to send data  
+        
+        syncStatHrViaWifi();
+    }
+    else 
+        return;
+    sPulse.dropData();
+}
+
+void Hardware::processStatData() {
+    statRecord_t current_rec;
+    memset(&current_rec, 0, sizeof(current_rec));
+    getCurrentSensorsData(&current_rec);
     
+    
+    log_file.init();
+    log_file.writeLog( &current_rec ); ///!!!!!!!!!!!!!! return this string
+    log_file.close(); 
+
+    addDisplayStat(current_rec.ObjectTempC);
+}
+   
 void Hardware::update() 
 {
     currentTime = now();
-    
+
     if (CONTROL_WIFI_INIT == ControlState)
         wm.process();
    /* --- return after  test 
@@ -184,27 +242,26 @@ void Hardware::update()
          init_sensors();
     }
      */
- 
     if (SENSOR_AWAKE == SensorState) 
          SensorState = SENSOR_WRITE_RESULT;
    
     printFsmState( __func__, __LINE__);
  
     if (CONTROL_AWAKE == ControlState) {
-        sGyro.read(); // ugly, read data only for prdometer 
+        sGyro.read(); // ugly, read data only for prdometer
+        printf_w("gyro read stop \n");
         sCurrent.read();
-        
+        printf_w("current read stop \n");
+
         statRecord_t *r = getLastSensorsData();
-        display.update(r->ObjectTempC, r->HeartRate, sGyro.getStepCount(), sCurrent.getBatLevel(), &graph);  // return r->Step after debug
+        display.update(r->ObjectTempC, r->HeartRate, sGyro.getStepCount(), r->Pressure, sCurrent.getBatLevel(), &graph);  // return r->Step after debug
     }
      
     if (SENSOR_WRITE_RESULT == SensorState) {
-        statRecord_t current_rec;
-        memset(&current_rec, 0, sizeof(current_rec));
-        getCurrentSensorsData(&current_rec);
+        processStatData();
+        processHrData();
 
-        log_file.writeLog( &current_rec ); ///!!!!!!!!!!!!!! return this string
-        /* --- return after  test     */
+     //   printAllStat();///
 
         int next_wake  = nextWakeTime();
         nextScanTime = currentTime + next_wake;
@@ -229,7 +286,7 @@ void Hardware::goToSleep()
     }
 
     if (SENSOR_GOTOSLEEP == SensorState) {
-        log_file.close(); 
+  //      log_file.close(); 
 
         SensorState = SENSOR_SLEEPING;
     }
@@ -252,6 +309,7 @@ void Hardware::goToSleep()
 
 statRecord_t *Hardware::getCurrentSensorsData(statRecord_t *record) 
 {
+    printf_w("getCurrentSensorsData\n");
     readSensors();
 
     //statRecord_t record;
@@ -261,7 +319,13 @@ statRecord_t *Hardware::getCurrentSensorsData(statRecord_t *record)
     record->SpO2         = sPulse.getSpO2();
     record->AmbientTempC = sTerm.getAmbientC(); 
     record->ObjectTempC  = sTerm.getObjectC();
+    record->Pressure     = sBME280.getPressure();
+    record->Humidity     = sBME280.getHumidity();
+
+    
     record->Vcc          = sCurrent.getVcc();
+
+
 
     return record;
 }
@@ -398,7 +462,6 @@ void Hardware::prepareGraphData(displayActivity_t act, int32_t _day,  int32_t _m
     free(skim_log);
 }
 
-
 struct tm * Hardware::takeLogDayFile(unsigned int curValue) 
 {
      time_t _temp_date = now() - curValue * 86400; //  can shit fappened in case new day 
@@ -515,11 +578,35 @@ void Hardware::setTempSwitch(bool val, bool need_save)
 void Hardware::setPedoSwitch(bool val, bool need_save)
 {
     if (val) 
+        sPulse.wake();
+    else 
+        sPulse.sleep();
+    if (true == need_save) {
+        cfg.setStepSensorSwitch(val);
+        cfg.setSaveFlag(need_save);
+    }
+}
+
+void Hardware::setPulseSwitch(bool val, bool need_save)
+{
+    if (val) 
         sGyro.wake();
     else 
         sGyro.sleep();
     if (true == need_save) {
-        cfg.setStepSensorSwitch(val);
+        cfg.setPulseSensorSwitch(val);
+        cfg.setSaveFlag(need_save);
+    }
+}
+
+void Hardware::setBaroSwitch(bool val, bool need_save)
+{
+    if (val) 
+        sBME280.wake();
+    else
+        sBME280.sleep();
+    if (true == need_save) {
+        cfg.setBaroSensorSwitch(val);
         cfg.setSaveFlag(need_save);
     }
 }
@@ -528,6 +615,9 @@ void Hardware::updateFromConfig()
 {
     setTempSwitch(cfg.getTempSensorSwitch(), false);
     setPedoSwitch(cfg.getStepSensorSwitch(), false);
+    setPulseSwitch(cfg.getPulseSensorSwitch(), false);
+    setBaroSwitch(cfg.getBaroSensorSwitch(), false);
+    
     setTimezone(cfg.getTimezone(), false);
 }
 
@@ -646,7 +736,9 @@ void Hardware::syncStatViaWifi()
             int32_t fname_len = log_file.filenameDate(pattern_url, sizeof(pattern_url), y, m, d); 
 
             if (fname_len > 0) {
-                sendStatFile(addr, uid, token, String(d) + "."+ String(m) +"." + String(y), String(pattern_url));
+                 String urlDir = "/action/send_thsdata.php";
+
+                sendStatFile(addr, uid, token, String(d) + "."+ String(m) +"." + String(y), String(pattern_url), urlDir);
             }
         }
   
@@ -662,12 +754,43 @@ void Hardware::syncStatViaWifi()
     }
 }
 
+void Hardware::syncStatHrViaWifi()
+{
+    WiFi.mode(WIFI_STA); // explicitly set mode, esp defaults to STA+AP        
+
+    wm.setConfigPortalBlocking(false);
+    
+    if ( !wm.autoConnect(wifi_ap_name) ){
+        printf_w("syncStatHrViaWifi: not connected to wifi");
+        return;
+    }
+    uint32_t t0 = millis();
+    uint32_t timeout = 15000UL;
+    
+    while (WiFi.status() != WL_CONNECTED) {
+        if (millis() > t0 + timeout) {
+            printf_w("syncStatHrViaWifi: no wifi\n");
+            return;
+        }
+        delay(1000);
+    }
+    String uid   = String(cfg.getServerUid());   
+    String token = String(cfg.getServerToken()); 
+    String addr  = String(cfg.getServerAddr());
+        
+    String urlDir = "/action/send_hrdata.php";
+    if ( true == sendStatFile(addr, uid, token, String("HRDATA"), String(hrFileName), urlDir) ){
+        hr_stat.deleteBigFile();
+    }
+}
+
 //----
 //============================================================================================
 // Control
 
 void Control::init()
 {
+
     pinMode(LEFT_BUTTON,INPUT);
     pinMode(RIGHT_BUTTON,INPUT);
     pinMode(OK_BUTTON,INPUT);
@@ -744,15 +867,29 @@ void Control::initWakeup()
 
 //============================================================================================
 // Config
+
 void Config::init() 
 {
     load();
     setToMenu();
 }
 
+void Config::initDefaultValues() 
+{
+    temp_sensor_switch = true;
+    step_sensor_switch = true;
+    timezone           = 6;
+    auto_update_time_over_wifi   = false;
+}
+
 void Config::load() 
 {
-    File file = SPIFFS.open(filename);
+    StaticJsonDocument<512> doc;
+    File file;
+
+    SPIFFS.begin();
+    file = SPIFFS.open(filename);
+        
     printf_w("%s, size %d\n", filename, file.size());
 /*
     while (file.available()) {
@@ -763,19 +900,19 @@ void Config::load()
     // Allocate a temporary JsonDocument
     // Don't forget to change the capacity to match your requirements.
     // Use arduinojson.org/v6/assistant to compute the capacity.
-    StaticJsonDocument<512> doc;
 
     DeserializationError error = deserializeJson(doc, file);
     if (error) {
         printf_w("Failed to read file, using default configuration. %p", file);
-        temp_sensor_switch = true;
-        step_sensor_switch = true;
-        timezone           = 6;
-        auto_update_time_over_wifi   = false;
+        initDefaultValues();
         file.close();
         return;
     }
+
+ //   "baro_switch":false,"pulse_switch":true,"temp_switch":true,"step_switch":true,"
     // Copy values from the JsonDocument to the Config
+    baro_sensor_switch  = doc["baro_switch"];
+    pulse_sensor_switch = doc["pulse_switch"]; 
     temp_sensor_switch = doc["temp_switch"];
     step_sensor_switch = doc["step_switch"];
     timezone           = doc["timezone"];
@@ -787,7 +924,7 @@ void Config::load()
         strcpy(server_addr, doc["server_addr"]);
 
     file.close();
-
+ 
     printf_w("Config load: server_uid %s, server_token %s\n", server_uid, server_token);
     serializeJson(doc, Serial); // {"hello":"world"}
     printf_w("\n");
@@ -816,7 +953,7 @@ void Config::save()
     printf_w("Config save, need_save - '%s'\n", need_save? "y" : "n" );
     if (!need_save)
         return;
-        
+
     printf_w("Config save: '%s'\n", filename);
     SPIFFS.remove(filename);
     printf_w("Config save: remove '%s'\n", filename);
@@ -834,7 +971,8 @@ void Config::save()
               temp_sensor_switch? "y":"n", step_sensor_switch?"y":"n", timezone,  auto_update_time_over_wifi?"y":"n",
               server_uid, server_token
               );
-
+    doc["baro_switch"] = baro_sensor_switch;
+    doc["pulse_switch"] = pulse_sensor_switch;
     doc["temp_switch"] = temp_sensor_switch;
     doc["step_switch"] = step_sensor_switch;
     doc["timezone"]    = timezone;
@@ -859,7 +997,8 @@ void Config::save()
 // set data to external values, uuuuglyyyy 
 void Config::setToMenu() 
 {
-// menuPulseMeter.setBoolean(newValue, true);
+    menuBaroMeter.setBoolean(baro_sensor_switch, true);
+    menuPulseMeter.setBoolean(pulse_sensor_switch, true);
     menuPedoMeter.setBoolean(step_sensor_switch, true);
     menuTemperature.setBoolean(temp_sensor_switch, true);
     menuTimeZone.setCurrentValue(timezone, true); 
@@ -878,7 +1017,8 @@ void Config::setCurrenDayTimeToMenu()
 
 void Config::cast_from_menu() 
 {
-// menuPulseMeter.setBoolean(newValue, true);
+    baro_sensor_switch         = menuBaroMeter.getBoolean();
+    pulse_sensor_switch        = menuPulseMeter.getBoolean();
     step_sensor_switch         = menuPedoMeter.getBoolean();
     temp_sensor_switch         = menuTemperature.getBoolean();
     timezone                   = menuTimeZone.getCurrentValue(); 
