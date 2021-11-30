@@ -10,7 +10,7 @@ It
 - Shows date and time
 - Counts steps, measure body temperature
 - Collects data for 10 days on mcu flash and shows nice graphs
-- Works ~3 days without charging (battery 130mAh)
+- Works ~3 days without charging, (pedometer - on, temperature sensor - on, all other sensors - off wake up every 1 minute, battery 130mAh)
 - send data via wifi to server
 - can sync date via ntp server
 
@@ -22,16 +22,21 @@ Current state.
 
 - MCU: ESP32 (collects data by ulp)
 - Display: 1.3" SH1106 
-- Pulsemeter: MAX30100 (switch off now, because data doesen't fit slow RTC memory)
+- Real Time Chip: DS3231MZ 
+- Pulsemeter: MAX30100 (ulp reads now only raw data)
 - Pedometer:  LSM6DS3C
 - Temperature sensor: MLX90615
+- Humidity sensor and barometer BME289
 - Current consumption sensor: INA219
 
+Under development.
+
+- adapting code to  e-paper display 1.54" 
+
 In long perspective i'm going to change 
-- display to 1.54" e-paper, 
+
 - perometer to BMA423 (it detects different types of activity and hand tilt movement),  
 and add
-- humidity sensor and barometer bme289
 - GPS L80-R or GP-1/2 (if can find proper place on pcb for antenna)
 
 Current consumption of watches now ~2mAh
@@ -49,6 +54,6 @@ Links:
 
 Youtube presentation -- https://youtu.be/CB8Ftyo_vDs (russian, with english subs)
 
-All fresh info and photo about development in instagram -- https://www.instagram.com/tshideas/
+All fresh info and photo about development in **instagram** -- https://www.instagram.com/tshideas/
 
 Development process and plains -- https://github.com/pikot/tsh-watch/projects/1
