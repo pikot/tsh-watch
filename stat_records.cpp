@@ -1143,12 +1143,12 @@ void FileSystem::rotateLogs()
 
 void FileSystem::writeLog( statRecord_t *record )
 {
-    //return ;
-    if (record->Time < START_GOOD_DATE) {
+     if (record->Time < START_GOOD_DATE) {
         printf_w("writeLog: time %d, record skipped, expected date more 1600000000 (Sun Sep 13 15:26:40 MSK 2020)\n", record->Time ); 
-        return;
-    }
-    memcpy( (void*) &RTC_RECORDS[statRecord_cnt], (void*) record, sizeof(statRecord_t) );
+        _canWrite = false;
+       // return;
+     }  
+     memcpy( (void*) &RTC_RECORDS[statRecord_cnt], (void*) record, sizeof(statRecord_t) );
     
     if (CACHE_RECORD_CNT == (statRecord_cnt + 1)){
         saveRecordsToFile();
@@ -1186,7 +1186,7 @@ void HrLog::writeLog( )
 {
   //  printf_w("RTC_RECORDS %p, statRecord_cnt %d\n", RTC_RECORDS, statRecord_cnt );
     //return ;
-    printPulseCashe();
+   // printPulseCashe(); // skip it for awhile, until I back to HR processing
 
     if (MAX30100_CACHE_RECORD_CNT == pulseCache_cnt ){
         saveRecordsToFile();

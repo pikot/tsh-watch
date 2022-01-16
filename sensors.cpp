@@ -309,8 +309,11 @@ void PulseMeter::dropData(){
 void PulseMeter::init(SoftWire *_i2c){
     i2c =  _i2c;
 
-    Sensor::init();
-
+    if ( false == Sensor::init() ) { 
+          sleep();     
+          return;
+    }
+    
     uint8_t reg_id;
     
     uint8_t res =  burstRead(MAX30100_REG_PART_ID, &reg_id, 1);
@@ -543,7 +546,9 @@ CurrentMeter::CurrentMeter() {
     vcc = 0;
 
     battery = new Battery(3200, 4200, A0);
-#ifdef IS_V1_3
+#ifdef IS_V1_4
+    battery->begin(250, 1.0, &sigmoidal);
+#elif IS_V1_3 
     battery->begin(200, 1.0, &sigmoidal);
 #else
     battery->begin(130, 1.0, &sigmoidal);
@@ -654,7 +659,6 @@ uint8_t TimeMeter::bcd2dec(uint8_t bcd)
     return ((bcd / 16) * 10) + (bcd % 16);
 }
 
-
 uint8_t TimeMeter::dec2bcd(uint8_t n)
 {
     uint16_t a = n;
@@ -667,15 +671,16 @@ bool TimeMeter::read_data_to_tm(tmElements_t &tm) {
         return false; 
         
     printUlpData();
-                   
+
+    uint32_t _month = bcd2dec(ulp_ds3231_month & 0x1F);
+    uint32_t _century = (ulp_ds3231_month & 0x80) >> 7;
     uint32_t yr = bcd2dec(ulp_ds3231_year);
-    if( yr > 99)
-        yr = yr - 1970;
-    else
-        yr += 30;  
-      
-    tm.Year = yr;
-    tm.Month = bcd2dec(ulp_ds3231_month);
+
+    uint32_t _year = _century * 100 + yr - 70;
+    _year = _year <0 ? 0 : _year; // crutch in case  year less than 1970
+    
+    tm.Year  = _year;
+    tm.Month = _month;
     tm.Day = bcd2dec(ulp_ds3231_day);
     tm.Hour = bcd2dec(ulp_ds3231_hour);
     tm.Minute = bcd2dec(ulp_ds3231_minute);
@@ -692,7 +697,7 @@ void TimeMeter::read() {
 
 void TimeMeter::printUlpData() {
 
-    printf_w("ds3231: ulp data %d/%d   %02d:%02d:%02d\n", ulp_ds3231_month, ulp_ds3231_day, ulp_ds3231_hour, ulp_ds3231_minute, ulp_ds3231_second);  
+    printf_w("ds3231: ulp data %d/%d/%d   %02d:%02d:%02d\n", ulp_ds3231_month, ulp_ds3231_day, ulp_ds3231_set_year, ulp_ds3231_hour, ulp_ds3231_minute, ulp_ds3231_second);  
     printf_w("ds3231 SET DATA: %02d:%02d:%02d  %02d.%02d.%02d (%d dow)  update_flag %d\n",
                    bcd2dec(ulp_ds3231_set_hour), bcd2dec(ulp_ds3231_set_minute),  bcd2dec(ulp_ds3231_set_second),
                    bcd2dec(ulp_ds3231_set_day),  bcd2dec(ulp_ds3231_set_month),  bcd2dec(ulp_ds3231_set_year) + 2000,  
@@ -706,9 +711,15 @@ void TimeMeter::updateUlpTime(tmElements_t &tm){
     ulp_ds3231_set_hour   = dec2bcd(tm.Hour);
     ulp_ds3231_set_dayOfWeek = dec2bcd(tm.Wday);
     ulp_ds3231_set_day       = dec2bcd(tm.Day);
-    ulp_ds3231_set_month     = dec2bcd(tm.Month);
-    ulp_ds3231_set_year      = dec2bcd(tm.Year - 30);
-    printf_w("year %d\n", ulp_ds3231_set_year);
+    
+// 2000 = 30 due to tmElements_t.Year;   // offset from 1970;
+    uint32_t _century = (tm.Year >= 30)? 0x80 : 0;
+    uint32_t _year    = (tm.Year >= 30)? (tm.Year - 30) : ( 70 + tm.Year); // (19)70 + year 
+
+    ulp_ds3231_set_month     = dec2bcd(tm.Month) + _century;
+    ulp_ds3231_set_year      = dec2bcd(_year);
+    
+    printf_w("year %d, tm.Year %d\n", ulp_ds3231_set_year, tm.Year);
     ulp_ds3231_update_flag = 1;
 }
 
@@ -813,10 +824,11 @@ void TimeMeter::updateTime(int h,  int m, int s){
 void TimeMeter::updateDate(int d,  int m, int y){
     tmElements_t tm; 
     if ( true == read_data_to_tm(tm) ) {
-      
-        tm.Year   = y;
+        uint8_t _year = y > 1970? y - 1970 : 0; // convert to tmElements_t format
+
+        tm.Year   = _year;
         tm.Month  = m;
-        tm.Day    = d;
+        tm.Day    = d; 
 
         updateUlpTime(tm);
         setTime(makeTime(tm));

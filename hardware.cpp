@@ -78,6 +78,7 @@ void Hardware::init()
     printf_w("fs stat: totalBytes %d,  usedBytes %d\n", SPIFFS.totalBytes(), SPIFFS.usedBytes());
 
     cfg.init(); // cfg -> settings
+
     updateFromConfig(); // cfg -> hardware///  yep, pretty sheety and best case scenario is to have one place to sync directly
     
     printFsmState( __func__, __LINE__ );
@@ -102,9 +103,17 @@ void Hardware::init()
          SensorState = SENSOR_AWAKE;
 
     if (CONTROL_AWAKE == ControlState) {
+#ifndef IS_V1_4
         display.init();
+#endif
         control.init();
     }
+
+#ifdef IS_V1_4
+    if (CONTROL_AWAKE == ControlState || SENSOR_AWAKE == SensorState ) {
+        display.init(isAfterDeepsleep);
+    }
+#endif
 
     printFsmState( __func__, __LINE__);    
 }
@@ -246,17 +255,17 @@ void Hardware::update()
          SensorState = SENSOR_WRITE_RESULT;
    
     printFsmState( __func__, __LINE__);
- 
+
     if (CONTROL_AWAKE == ControlState) {
         sGyro.read(); // ugly, read data only for prdometer
         printf_w("gyro read stop \n");
         sCurrent.read();
         printf_w("current read stop \n");
-
         statRecord_t *r = getLastSensorsData();
-        display.update(r->ObjectTempC, r->HeartRate, sGyro.getStepCount(), r->Pressure, sCurrent.getBatLevel(), &graph);  // return r->Step after debug
+        //TODO  put into update all statRecord_t
+        display.update(r->ObjectTempC, r->HeartRate, sGyro.getStepCount(), r->Pressure, r->Humidity, sCurrent.getBatLevel(), &graph);  // return r->Step after debug
     }
-     
+
     if (SENSOR_WRITE_RESULT == SensorState) {
         processStatData();
         processHrData();
@@ -268,6 +277,17 @@ void Hardware::update()
         SensorState    = SENSOR_GOTOSLEEP;
         updateSkimlog();
     }
+
+#ifdef IS_V1_4
+    if (SENSOR_GOTOSLEEP == SensorState) {
+        statRecord_t *r = getLastSensorsData();
+
+        sCurrent.read();
+        printf_w("gyro read stop %d \n", r->Vcc);
+        display.update(r->ObjectTempC, r->HeartRate, r->Steps, r->Pressure, r->Humidity, sCurrent.getBatLevel(), &graph);  // return r->Step after debug
+        
+    }
+#endif
 }
 
 int Hardware::nextWakeTime()
@@ -324,8 +344,6 @@ statRecord_t *Hardware::getCurrentSensorsData(statRecord_t *record)
 
     
     record->Vcc          = sCurrent.getVcc();
-
-
 
     return record;
 }
@@ -385,8 +403,14 @@ struct tm * Hardware::loadPrevDayFile()
 void Hardware::runActivity(uint64_t _buttons) 
 {
     displayActivity_t _activity = display.getCurrentActivity();
+
+
     if (WATCH_ACTICITY == _activity) {
+#ifdef IS_V1_4
+         bool pressed_menu = !(_buttons & (1ULL << control.pinLeft())) ?  true : false;
+#else
          bool pressed_menu = !(_buttons & (1ULL << control.pinRight())) ?  true : false;
+#endif
          if (true == pressed_menu) {
               cfg.setCurrenDayTimeToMenu();
               display.setCurrentActivity(ICON_MENU_MAIN_ACTIVITY);
@@ -507,7 +531,6 @@ void Hardware::showGraph()
 {
     display.graphDraw(&graph);
 }
-        
 
 void Hardware::showActivity(displayActivity_t act) 
 {
@@ -578,9 +601,9 @@ void Hardware::setTempSwitch(bool val, bool need_save)
 void Hardware::setPedoSwitch(bool val, bool need_save)
 {
     if (val) 
-        sPulse.wake();
+        sGyro.wake();
     else 
-        sPulse.sleep();
+        sGyro.sleep();
     if (true == need_save) {
         cfg.setStepSensorSwitch(val);
         cfg.setSaveFlag(need_save);
@@ -590,9 +613,9 @@ void Hardware::setPedoSwitch(bool val, bool need_save)
 void Hardware::setPulseSwitch(bool val, bool need_save)
 {
     if (val) 
-        sGyro.wake();
+        sPulse.wake();
     else 
-        sGyro.sleep();
+        sPulse.sleep();
     if (true == need_save) {
         cfg.setPulseSensorSwitch(val);
         cfg.setSaveFlag(need_save);
@@ -905,6 +928,7 @@ void Config::load()
     if (error) {
         printf_w("Failed to read file, using default configuration. %p", file);
         initDefaultValues();
+        need_save = true;
         file.close();
         return;
     }
@@ -935,12 +959,21 @@ void Config::load()
 void Config::updateUlpConfig() 
 {
     uint16_t switch_extern = 0;
+    /*
     if (temp_sensor_switch) {
-        switch_extern |= SENSOR_INA219;
+        switch_extern |= SENSOR_MLX90615;
     }
     if (step_sensor_switch) {
-        switch_extern |= SENSOR_INA219;
+        switch_extern |= SENSOR_LSM6DS3;
     }
+    if (baro_sensor_switch) {
+        switch_extern |= SENSOR_BME280;
+    }
+    if (pulse_sensor_switch) {
+        switch_extern |= SENSOR_MAX30100;
+    }
+    */
+    switch_extern |= SENSOR_INA219;
 
     if (ulp_sensors_switch_extern != switch_extern) {
         ulp_sensors_switch_extern = switch_extern; 

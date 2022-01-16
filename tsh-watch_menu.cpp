@@ -140,8 +140,16 @@ void setupMenu( U8G2 *_gfx ) {
     
     switches.initialise(internalDigitalIo(), true);
 
-
-    menuMgr.initForUpDownOk(&renderer, &menuClose, CONTROL_RIGHT_BUTTON, CONTROL_LEFT_BUTTON, CONTROL_OK_BUTTON);
+    int btnUp = 0;
+    int btnDown = 0 ;  
+#ifdef IS_V1_4
+    btnUp =   CONTROL_LEFT_BUTTON;
+    btnDown = CONTROL_RIGHT_BUTTON;  
+#else
+    btnUp =   CONTROL_RIGHT_BUTTON;
+    btnDown = CONTROL_LEFT_BUTTON ;  
+#endif
+    menuMgr.initForUpDownOk(&renderer, &menuClose, btnUp, btnDown, CONTROL_OK_BUTTON);
 }
 
 

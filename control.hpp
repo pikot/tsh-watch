@@ -6,7 +6,7 @@
 
 #include "version.h"
 
-#ifdef  IS_V1_3
+#if defined  IS_V1_3 || defined  IS_V1_4
 #define CONTROL_LEFT_BUTTON   34
 #define CONTROL_RIGHT_BUTTON  36
 #define CONTROL_OK_BUTTON     39 

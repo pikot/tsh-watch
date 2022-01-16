@@ -27,8 +27,11 @@ void setupMenu(U8G2 *_gfx);  // forward reference of the menu setup function.
 extern const PROGMEM ConnectorLocalInfo applicationInfo;  // defines the app info to the linker.
 
 // Global variables that need exporting
-
+#ifdef IS_V1_4
+extern U8G2_SSD1681_200X200_F_4W_SW_SPI *gfx;
+#else
 extern U8G2_SH1106_128X64_NONAME_F_HW_I2C *gfx;
+#endif
 extern U8g2GfxMenuConfig gfxConfig;
 extern U8g2MenuRenderer renderer;
 

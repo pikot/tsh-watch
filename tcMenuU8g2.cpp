@@ -17,6 +17,7 @@
 #include <U8g2lib.h>
 #include "tcMenuU8g2.h"
 #include "utils.h"
+#include "version.h"
 
 const char MENU_BACK_TEXT[] PROGMEM = "[..]";
 
@@ -282,7 +283,6 @@ void prepareBasicU8x8Config(U8g2GfxMenuConfig& config) {
 
 	  config.bgTitleColor = WHITE;
 	  config.fgTitleColor = BLACK;
-	  config.titleFont = u8g2_font_6x12_tf;
 	  config.titleBottomMargin = 1;
 	  config.widgetColor = BLACK;
 	  config.titleFontMagnification = 1;
@@ -291,13 +291,26 @@ void prepareBasicU8x8Config(U8g2GfxMenuConfig& config) {
 	  config.fgItemColor = WHITE;
 	  config.bgSelectColor = BLACK;
 	  config.fgSelectColor = WHITE;
-	  config.itemFont = u8g2_font_6x10_tf;
 	  config.itemFontMagnification = 1;
 
     config.editIcon = loResEditingIcon;
     config.activeIcon = loResActiveIcon;
+
+
+#ifdef IS_V1_4
+    config.editIconHeight = 11;
+    config.editIconWidth = 13;
+    config.titleFont = u8g2_font_crox5h_tr;
+    config.itemFont = u8g2_font_crox4h_tr;
+    printf_w("IS_V1_4 \n");
+#else
     config.editIconHeight = 6;
     config.editIconWidth = 8;
+    config.titleFont = u8g2_font_6x12_tf;
+    config.itemFont = u8g2_font_6x10_tf;
+    printf_w("IS_old \n");
+#endif
+    
 }
 
 BaseDialog* U8g2MenuRenderer::getDialog() {

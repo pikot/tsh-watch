@@ -34,6 +34,7 @@ void CALLBACK_FUNCTION onAutoUpdateCh(int id)
 void CALLBACK_FUNCTION onDateCh(int id) 
 {
     DateStorage dt = menuDate.getDate();
+    
     watch.setDate(dt);
 }
 

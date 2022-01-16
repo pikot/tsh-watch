@@ -17,6 +17,7 @@
 
 #include "display.hpp"
 #include "ulp_main.h"
+#include "version.h"
 
 #include "control.hpp"
 
@@ -180,7 +181,11 @@ class Hardware {
         esp_sleep_wakeup_cause_t wakeupReason;
      
         uint8_t  pulse_threshold   = 3; 
+#ifdef IS_V1_4
+        uint32_t displaySleepDelay = 8000; //
+#else
         uint32_t displaySleepDelay = 4000; //
+#endif
         uint32_t displaySleepTimer = 0;
         Graph  graph;
 

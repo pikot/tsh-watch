@@ -4,9 +4,13 @@
 #ifndef _VERSION_
 #define _VERSION_
 
-#define IS_V1_3 1
+#define IS_V1_4 1
+// #define IS_V1_3 1
 
-#ifdef IS_V1_3
+// GPIO32 RTC_GPIO9
+// GPIO33 RTC_GPIO8
+
+#if defined IS_V1_3 || defined IS_V1_4 // yep it's uglu conception =)
 #define CURRENT_LOG_VERSION 2
 #define ULP_SCL_PIN 9 
 #define ULP_SDA_PIN 8

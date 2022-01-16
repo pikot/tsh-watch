@@ -38,17 +38,41 @@ unsigned char temperaturePicArray[] = {
  0x54,0xff,0xba,0xf6,0x7d,0xf1,0x7d,0xf1,0x7d,0xf1,0xbb,0xf1,
  0xc6,0xf0,0x7c,0xf0};
 
-
+ unsigned char humidityPicArray[] = {
+ 0x40,0xe0,0xe0,0xe0,0x10,0xe1,0x08,0xe2,0x04,0xe4,0x02,0xe8,
+ 0x02,0xe8,0x01,0xf0,0x01,0xf0,0x01,0xf0,0x05,0xf0,0x09,0xf0,
+ 0x3a,0xf8,0xe6,0xec,0x1c,0xe6,0xf0,0xe1};
 
 void Display::init() 
 {
+     init(false);
+}
 
-   // U8G2_SSD1306_128X64_NONAME_F_HW_I2C _display1(U8G2_R0, /* reset=*/ U8X8_PIN_NONE, /* clock=*/  22, /* data=*/ 21); 
+void Display::init(bool isAfterDeepsleep) 
+{
+#ifdef IS_V1_4
+    print_w("Display::SSD1681 \n"); // test to see slow  init
+
+    U8G2_SSD1681_200X200_F_4W_SW_SPI _display1(U8G2_R3, /* clock=*/ ELINK_CL, /* data=*/ ELINK_MOSI, /* cs=*/ ELINK_SS, /* dc=*/ ELINK_DC, /* reset=*/ ELINK_RESET, ELINK_BUSY);    
+#else
+    print_w("Display::SH1106 \n"); // test to see slow  init
+
     U8G2_SH1106_128X64_NONAME_F_HW_I2C  _display1(U8G2_R0, U8X8_PIN_NONE, /* clock=*/ 22, /* data=*/ 21 );
+    _display1.setBusClock(400000);
+#endif
     _display = _display1;
-    _display.setBusClock(400000);
+
     print_w("Display::init -- before begin  \n"); // test to see slow  init
+#ifdef IS_V1_4
+    if (isAfterDeepsleep) {
+        _display.initPartialDisplay();
+        _display.setPowerSave(0);
+    } else {
+        _display.begin(); 
+    }
+#else
     _display.begin(); 
+#endif
     print_w("Display::init -- after begin  \n"); // test to see sloe init end
 
    // _display.setPowerSave(true);// kkkkkkK oatoff after test
@@ -56,10 +80,14 @@ void Display::init()
     currentActivity = WATCH_ACTICITY;
 
     bitmapInitialize();
-
+#ifdef IS_V1_4
+    mScreen = new mainScreen200x200(&_display);
+#else 
+    mScreen = new mainScreen128x64(&_display);
+#endif
    // main_menu.init(_display);
     setupMenu(&_display);
-
+    
 }
 
 void Display::bitmapInitialize(){
@@ -79,7 +107,207 @@ void Display::showDigitalClock(int16_t x, int16_t y)
 const char * weekDays[] = { "", "Sun", "Mon", "Tue", "Wed",
                                 "Thu", "Fri", "Sat",
                               };
-                              
+
+
+screenEntity::screenEntity(U8G2 *_display, int _x, int _y, const uint8_t *_font,  
+                           unsigned char *_picArray, uint8_t _picW, uint8_t _picH): 
+                           display(_display), x(_x), y(_y), font(_font){
+    if ( _picArray ) {
+        bmp = new Bitmap();
+        bmp->set(_picArray, _picW, _picH);
+    }
+    else 
+        bmp = NULL;
+}
+                          
+screenEntity::~screenEntity(){
+    if (bmp)
+        delete(bmp);
+}
+
+void screenEntity::draw(char *str) {
+    if (bmp) {
+        display->drawXBMP(x, y - (bmp->height - bmp->height/4) , bmp->width, bmp->height, bmp->pic);
+    }
+    if (str) {
+        display->setFont(font);
+        uint16_t shift = 0;
+        if (bmp) {
+            shift = bmp->width + 2;
+        }
+        display->drawStr(x + shift, y, str);
+    }
+}
+
+void screenEntity::drawBmp(int x, int y) {
+    if (bmp) {
+        display->drawXBMP(x, y, bmp->width, bmp->height, bmp->pic);
+    }
+}
+
+
+void dateScreenEntity::draw() {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%02d/%02d %s", month(), day(), weekDays[weekday()] );  
+    screenEntity::draw(buf);
+}
+
+void timeScreenEntity::draw() {
+    char                buf[16];
+    snprintf(buf, sizeof(buf), "%d:%02d", hour(), minute() );  
+    screenEntity::draw(buf);
+}
+
+void batteryScreenEntity::draw(uint8_t batLevel) {   
+      display->drawXBMP(x, y, bmp->width, bmp->height, bmp->pic);
+ 
+    uint32_t _size = 14;
+    int w = (batLevel * _size) / 100;
+    display->drawBox(x + 1, y + 2, w, 5);
+    printf_w("-showBatteryLevel- %d %, %d\n", batLevel, w);
+}
+
+void stepScreenEntity::draw(uint16_t steps) {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%d", steps );
+    screenEntity::draw(buf);
+}
+
+void tempScreenEntity::draw(float therm) {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%.1f\xB0""C", therm );  
+    screenEntity::draw(buf);
+}
+
+void presScreenEntity::draw(float pressure) {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%.0f", pressure);  
+    screenEntity::draw(buf);
+}
+
+void humScreenEntity::draw(float humidity) {
+    char                buf[32];
+    snprintf(buf, sizeof(buf), "%.0f%%", humidity);  
+    screenEntity::draw(buf);
+}
+
+void graphScreenEntity::draw(uint16_t w,  uint16_t h ) {
+  
+    float buf[CACHE_DISPLAY_CNT];
+    uint8_t bufSize = getDisplayStat(buf, CACHE_DISPLAY_CNT);
+    
+    //printf_w("DDDDDDDDDDDDDDDDDDisplay::showGraph -- bufSize %d \n", bufSize); // test to see sloe init end
+    if (bufSize <= 0)
+        return;
+  //  _display.drawFrame(x, y, w, h);
+    uint32_t digit_shift = 15;
+    display->drawLine(x, y+h, x + w - digit_shift, y+h);
+    if (bmp) {
+        display->drawXBMP(x + w - bmp->width, y - bmp->height - 5, bmp->width, bmp->height, bmp->pic);
+    }
+
+    float maxV = 0, minV = FLT_MAX;
+    for (int32_t i = 0; i < bufSize; i++) {
+       //   printf_w("Display::showGraph buf[i] %f,  maxV %f\n",  buf[i],  maxV );
+          maxV = max(maxV, buf[i]);
+          minV = min (minV, buf[i]);
+    }
+    if (maxV <= 0) {
+          return;
+    }
+
+    float maxLen = maxV - minV;
+    float graphEndY = y + h;
+    float  _pos_x = x + 3, _step = w / bufSize;
+
+    display->setFont(u8g2_font_blipfest_07_tn);
+    display->setDrawColor( 1 );
+    int countColumnY = 2;
+    float step_V =  maxLen / countColumnY; 
+    int step_y =  h / countColumnY; 
+
+    float dig = (float) maxV, count = 0 ;
+    int i = 0;
+    for (count = y, i = 0; i <= countColumnY; count += step_y, dig -= (float)step_V  , i += 1) {
+     //   display->drawLine(_pos_x + w , count,   x + w - 2, count);
+        display->drawLine(x, count, x + 2, count);
+        display->setCursor(x + w - digit_shift , count + 3 );
+        char buf[16];
+        snprintf(buf, sizeof(buf), "%.1f", dig);
+        display->print(buf);
+    } 
+
+    
+    for (int32_t i = 0; i < bufSize; i++) {
+           float lenLine = ( (buf[i] - minV )* h) / maxLen;
+           float _pos_y_start  = (graphEndY - lenLine);
+           float _pos_y_end = graphEndY;
+        //   printf_w("Display::showGraph -- i %d, lenLine %f, _pos_y_start %f, _pos_y_end %f, _pos_x %f \n", i, lenLine, _pos_y_start, _pos_y_end, _pos_x ); // test to see sloe init end
+
+           display->drawLine(_pos_x, _pos_y_start, _pos_x, _pos_y_end);
+           _pos_x += _step;
+    }    
+}
+
+mainScreen128x64::mainScreen128x64(U8G2 *_display) {
+    display = _display;
+    
+    graphW = 63; 
+    graphH = 36;
+    Date    = new dateScreenEntity(_display, 64, 6, u8g2_font_profont10_tr, NULL, 0, 0) ;
+    Time    = new timeScreenEntity(_display, 0, 21, u8g2_font_logisoso20_tn, NULL, 0, 0);
+    Battery = new batteryScreenEntity(_display, 112, 0, NULL, batteryPicArray, 16, 9);
+    Steps   = new stepScreenEntity(_display, 0, 60, u8g2_font_courR08_tf, footprintsPicArray, 13, 16);
+    Temperature = new tempScreenEntity(_display, 0, 45, u8g2_font_courR08_tf, temperaturePicArray, 12, 14);
+    Pressure = new presScreenEntity(_display, 75, 60, u8g2_font_courR08_tf, pressurePicArray, 13, 16);
+    Graph    = new graphScreenEntity(_display, 65, 11, NULL, 0, 0);
+}
+
+mainScreen200x200::mainScreen200x200(U8G2 *_display) {
+    display = _display;
+
+    graphW = 199; 
+    graphH = 100;
+    //TODO create bmp separately 
+    Date    = new dateScreenEntity(_display, 105, 10, u8g2_font_DigitalDisco_tr, NULL, 0, 0) ;
+    Time    = new timeScreenEntity(_display, 0, 35, u8g2_font_logisoso34_tn, NULL, 0, 0);
+    Battery = new batteryScreenEntity(_display, 180, 0, NULL, batteryPicArray, 16, 9);
+    uint16_t personDataY = 186;
+    Steps   = new stepScreenEntity(_display, 0, personDataY, u8g2_font_DigitalDisco_tu, footprintsPicArray, 13, 16);
+    Temperature = new tempScreenEntity(_display, 65, personDataY, u8g2_font_DigitalDisco_te, temperaturePicArray, 12, 14);
+    
+    Pressure = new presScreenEntity(_display, 130, 197, u8g2_font_DigitalDisco_tu, pressurePicArray, 13, 16);
+    Humidity = new humScreenEntity(_display, 130, 180, u8g2_font_DigitalDisco_tu, humidityPicArray, 13, 16);
+
+    Graph    = new graphScreenEntity(_display, 0, 60, temperaturePicArray, 12, 14);
+}
+
+mainScreen::~mainScreen(){
+    delete(Date);
+    delete(Time);
+    delete(Battery);
+    delete(Steps);
+    delete(Temperature);
+    delete(Pressure);
+    delete(Graph);
+    if (Humidity) {
+        delete(Humidity);
+    }
+}
+
+void mainScreen::draw(float therm, float pulse, uint16_t steps, float pressure, uint8_t humidity, uint8_t batLevel){
+    Date->draw();
+    Time->draw();
+    Battery->draw(batLevel);
+    Steps->draw(steps);
+    Temperature->draw(therm);
+    Pressure->draw(pressure);
+    if (Humidity) {
+          Humidity->draw(humidity);
+    }
+    Graph->draw(graphW, graphH);
+}
+/*
 void Display::showDate(int16_t x, int16_t y) {
     char                buf[32];
     snprintf(buf, sizeof(buf), "%02d/%02d %s", month(), day(), weekDays[weekday()] );  
@@ -87,9 +315,9 @@ void Display::showDate(int16_t x, int16_t y) {
     _display.setFont(u8g2_font_profont10_tr);
     _display.drawStr(x , y, buf);
 }
+
 void Display::showTemperatureC(int16_t x, int16_t y, float therm, float pulse) 
 {
-  
     _display.drawXBMP(x, y - 11, temperaturePic.width, temperaturePic.height, temperaturePic.pic);
     char                buf[32];
     snprintf(buf, sizeof(buf), "%.1f\xB0""C", therm );  
@@ -119,20 +347,15 @@ void Display::showSteps(int16_t x, int16_t y, uint16_t steps)
 }
 
 void Display::showBatteryLevel(uint8_t batLevel){
-//      oled.display_pic(battery_pic.pic, battery_pic.width, battery_pic.height,  true);
-  //  int color = light_up? SSD1306_WHITE : SSD1306_BLACK;
-  //  _display.setDrawColor(color);
-
     _display.drawXBMP(112, 0, batteryPic.width, batteryPic.height, batteryPic.pic);
     uint32_t _size = 14;
     int w = (batLevel * _size) / 100;
     _display.drawBox(113, 2, w, 5);
     
-   //  printf_w("-showBatteryLevel- %d %, %d\n", batLevel, w);
+     printf_w("-showBatteryLevel- %d %, %d\n", batLevel, w);
 
   //  oled.display_rect(107,2,last_battery_volt_level,5,lightup);
 }
-
 
 void Display::showGraph(int16_t x, int16_t y) 
 {    
@@ -149,7 +372,7 @@ void Display::showGraph(int16_t x, int16_t y)
 
     float maxV = 0, minV = FLT_MAX;
     for (int32_t i = 0; i < bufSize; i++) {
-          printf_w("Display::showGraph buf[i] %f,  maxV %f\n",  buf[i],  maxV );
+       //   printf_w("Display::showGraph buf[i] %f,  maxV %f\n",  buf[i],  maxV );
           maxV = max(maxV, buf[i]);
           minV = min (minV, buf[i]);
     }
@@ -163,16 +386,17 @@ void Display::showGraph(int16_t x, int16_t y)
            float lenLine = ( (buf[i] - minV )* h) / maxLen;
            float _pos_y_start  = (graphEndY - lenLine);
            float _pos_y_end = graphEndY;
-           printf_w("Display::showGraph -- i %d, lenLine %f, _pos_y_start %f, _pos_y_end %f, _pos_x %f \n", i, lenLine, _pos_y_start, _pos_y_end, _pos_x ); // test to see sloe init end
+        //   printf_w("Display::showGraph -- i %d, lenLine %f, _pos_y_start %f, _pos_y_end %f, _pos_x %f \n", i, lenLine, _pos_y_start, _pos_y_end, _pos_x ); // test to see sloe init end
 
            _display.drawLine(_pos_x, _pos_y_start, _pos_x, _pos_y_end);
            _pos_x += _step;
-    }
-    
+    }    
 }
+*/
 
-void Display::showWatchActivity(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel) 
+void Display::showWatchActivity(float therm, float pulse, uint16_t steps, float pressure, uint8_t humidity, uint8_t batLevel) 
 {
+  /*
     showDigitalClock(0, 21);
     showDate(64, 6);
     showTemperatureC(0, 45, therm, pulse);
@@ -181,6 +405,11 @@ void Display::showWatchActivity(float therm, float pulse, uint16_t steps, float 
     showGraph(65, 11);
     
     showBatteryLevel(batLevel);
+*/
+    if (mScreen) {
+         mScreen->draw(therm,  pulse,  steps,  pressure, humidity, batLevel);
+    }
+    
 }
 
 const char pgmInfoHeader[] PROGMEM = "Sync watch time ";
@@ -301,7 +530,7 @@ void Display::setCurrentActivity(displayActivity_t activity)
 //     printf_w("---  setCurrentActivity %d\n", activity);
 }
 
-void Display::update(float therm, float pulse, uint16_t steps, float pressure, uint8_t batLevel, Graph *graph)
+void Display::update(float therm, float pulse, uint16_t steps, float pressure, uint8_t humidity, uint8_t batLevel, Graph *graph)
 {
    // if (millis() - tsLastDisplayUpdate <= REPORTING_PERIOD_MS) 
    //     return;
@@ -309,9 +538,17 @@ void Display::update(float therm, float pulse, uint16_t steps, float pressure, u
     tsLastDisplayUpdate = millis();
     
     if (WATCH_ACTICITY == currentActivity) {
+      /*
         _display.clearBuffer();         // clear the internal memory
         showWatchActivity( therm,  pulse,  steps, pressure, batLevel);
         _display.sendBuffer();          // transfer internal memory to the display
+*/
+        
+        _display.firstPage();
+        do {
+              showWatchActivity( therm,  pulse,  steps, pressure, humidity, batLevel);
+        } while ( _display.nextPage() );
+        delay(1000);
     }
     else
     if (ICON_MENU_MAIN_ACTIVITY == currentActivity ||

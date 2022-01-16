@@ -4,7 +4,8 @@
 #include "Arduino.h"
 #include "version.h"
 
-#ifdef IS_V1_3 
+// should be synced with  ULP_SCL_PIN ULP_SDA_PIN  in version.h
+#if defined IS_V1_3 || IS_V1_4
 const gpio_num_t GPIO_SCL = GPIO_NUM_32;
 const gpio_num_t GPIO_SDA = GPIO_NUM_33;
 #else
