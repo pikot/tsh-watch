@@ -29,7 +29,7 @@ Current state.
 - Barometer and air humidity sensor: BME280
  
 In long perspective i'm going to change 
-- pedometer to BMA423 (it detects different types of activity and hand tilt movement),  
+- pedometer to BMA400 (it detects different types of activity and hand tilt movement),  
 - barometer/air humidity/VOC sensor BME680 
 
 Current consumption of watches now ~2mAh
