@@ -2,15 +2,15 @@
 
 This is software for watches on esp32. Ulp version. 
 
-![front view](http://vesovoy-control.ru/tsh_watch_foto/tsh_watch_front.png)
+![front view](https://hackster.imgix.net/uploads/attachments/1410249/img_20220117_071726_5IQAxgtHM6.jpg?auto=compress%2Cformat&w=740&h=555&fit=max)
 
 Main feature 
 
 It 
 - Shows date and time
-- Counts steps, measure body temperature
+- Counts steps, measures body temperature, detects atmospheric pressure and air humidity
 - Collects data for 10 days on mcu flash and shows nice graphs
-- Works ~3 days without charging (battery 130mAh)
+- Works ~4 days without charging (battery 300mAh) // previous result ~3 days with oled display and 180mAh battery
 - send data via wifi to server
 - can sync date via ntp server
 
@@ -21,18 +21,16 @@ long perspective.
 Current state.
 
 - MCU: ESP32 (collects data by ulp)
-- Display: 1.3" SH1106 
+- Display: 1.54" 200x200 GDEH0154D67 
 - Pulsemeter: MAX30100 (switch off now, because data doesen't fit slow RTC memory)
 - Pedometer:  LSM6DS3C
 - Temperature sensor: MLX90615
 - Current consumption sensor: INA219
-
+- Barometer and air humidity sensor: BME280
+ 
 In long perspective i'm going to change 
-- display to 1.54" e-paper, 
-- perometer to BMA423 (it detects different types of activity and hand tilt movement),  
-and add
-- humidity sensor and barometer bme289
-- GPS L80-R or GP-1/2 (if can find proper place on pcb for antenna)
+- pedometer to BMA423 (it detects different types of activity and hand tilt movement),  
+- barometer/air humidity/VOC sensor BME680 
 
 Current consumption of watches now ~2mAh
 
